@@ -1,0 +1,5 @@
+# Общий файл проекта. Каждый сервис описан в своей папке (infra/*, services/*)
+# и подключается сюда одной строкой.
+# Запуск всего: docker compose up -d. Только нужного: docker compose up -d tei
+include:
+  - infra/tei/compose.yml

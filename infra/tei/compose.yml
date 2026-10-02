@@ -1,0 +1,15 @@
+# TEI — готовый сервер модели bge-m3: переводит текст в набор из 1024 чисел.
+# Нужен worker (шаг 2) и kb-index.
+# Официальный CPU-образ собран только под x86, на Mac M1–M4 работает через эмуляцию.
+services:
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    platform: linux/amd64
+    command: ["--model-id", "BAAI/bge-m3", "--port", "80"]
+    ports:
+      - "127.0.0.1:8081:80"     # не стандартный порт на компьютере
+    volumes:
+      - tei-models:/data        # скачанная модель сохраняется между запусками
+
+volumes:
+  tei-models:
