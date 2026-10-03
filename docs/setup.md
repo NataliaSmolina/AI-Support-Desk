@@ -37,7 +37,19 @@ docker compose logs -f tei     # ждать строку Ready, затем Ctrl+
 
 При первом запуске TEI скачивает bge-m3 (около 2 ГБ).
 
-## 5. Проверки на настоящих моделях
+## 5. Telegram-бот
+
+1. Получить токен у [@BotFather](https://t.me/BotFather) (`/newbot`).
+2. Вписать его в `.env`: `BOT_TOKEN=...`. Файл `.env` в `.gitignore` — в git токен не попадёт.
+3. Запустить:
+
+```bash
+uv run python -m support_bot.main
+```
+
+Остановить — Ctrl+C. Бот работает в режиме polling: сам спрашивает у Telegram новые сообщения, публичный адрес не нужен.
+
+## 6. Проверки на настоящих моделях
 
 ```bash
 uv run python evals/check_embed.py
