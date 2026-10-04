@@ -4,16 +4,17 @@
 name = "support-desk"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["ai-clients"]
+dependencies = ["ai-clients", "kb-index"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
 ai-clients = { workspace = true }
+kb-index = { workspace = true }
 
 [tool.uv.workspace]
-members = ["libs/*"]
+members = ["libs/*", "services/*"]
 
 [dependency-groups]
 dev = [
