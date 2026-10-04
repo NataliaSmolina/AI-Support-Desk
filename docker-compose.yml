@@ -3,3 +3,4 @@
 # Запуск всего: docker compose up -d. Только нужного: docker compose up -d tei
 include:
   - infra/tei/compose.yml
+  - infra/llm/compose.yml
