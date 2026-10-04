@@ -7,12 +7,13 @@
 | Сервис | Файл | Порт |
 |---|---|---|
 | TEI (bge-m3) | `infra/tei/compose.yml` | 8081 |
+| LLM (Ollama + qwen3:8b) | `infra/llm/compose.yml` | 11500 |
 
 ## 1. Docker
 
 Docker Desktop: https://www.docker.com/products/docker-desktop
 
-Docker Desktop → Settings → Resources → Memory: не меньше 12 ГБ.
+Docker Desktop → Settings → Resources → Memory: не меньше 12 ГБ, модели вместе занимают около 8 ГБ.
 
 ## 2. uv
 
@@ -30,17 +31,36 @@ uv run pytest
 
 ## 4. Запуск сервисов
 
+Всё сразу:
+
 ```bash
-docker compose up -d tei
-docker compose logs -f tei     # ждать строку Ready, затем Ctrl+C
+docker compose up -d
 ```
 
-При первом запуске TEI скачивает bge-m3 (около 2 ГБ).
+Или по одному: `docker compose up -d tei`, `docker compose up -d llm llm-pull`.
 
-## 5. Проверки на настоящих моделях
+Готовность:
 
 ```bash
-uv run python evals/check_embed.py
+docker compose logs -f tei        # ждать строку Ready (первый раз ~2 ГБ)
+docker compose logs -f llm-pull   # ждать строку success (первый раз ~5 ГБ)
+```
+
+Ctrl+C — выйти из логов.
+
+## 5. Закрепить версию LLM-сервера (один раз, делает один человек)
+
+```bash
+docker compose exec llm ollama --version
+```
+
+Впишите версию в `.env.example` вместо `latest`, например `LLM_IMAGE=ollama/ollama:0.12.3`, и закоммитьте.
+
+## 6. Проверки на настоящих моделях
+
+```bash
+uv run python evals/check_embed.py      # шаг 2
+uv run python evals/check_classify.py   # шаг 1
 ```
 
 ## Остановить
@@ -49,6 +69,8 @@ uv run python evals/check_embed.py
 docker compose down
 ```
 
+Скачанные модели остаются в томах Docker.
+
 ## Про скорость на Mac
 
-Docker на Mac не использует графику чипа M1–M4, а образ TEI работает ещё и через эмуляцию x86. Это медленнее, результат тот же. Замеры записывайте с пометкой, на какой машине они сделаны.
+Docker на Mac не использует графику чипа M1–M4, поэтому модели в контейнерах считают на процессоре, а TEI ещё и через эмуляцию x86. Это медленнее, результат тот же. Замеры записывайте с пометкой, на какой машине они сделаны.
