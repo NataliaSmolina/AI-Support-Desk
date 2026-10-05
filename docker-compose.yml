@@ -4,3 +4,4 @@
 include:
   - infra/tei/compose.yml
   - infra/llm/compose.yml
+  - infra/postgres/compose.yml
