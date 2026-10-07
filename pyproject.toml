@@ -1,4 +1,4 @@
-# Корень проекта: объединяет все пакеты (libs/*, позже services/*) в один uv workspace.
+# Корень проекта: объединяет все пакеты (libs/*, services/*) в один uv workspace.
 # Сам корень кода не содержит, но через него запускаются тесты и проверки из evals/.
 [project]
 name = "support-desk"
@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "ai-clients",
     "psycopg[binary]>=3.3.6",
+    "support-bot",
 ]
 
 [tool.uv]
@@ -14,9 +15,10 @@ package = false
 
 [tool.uv.sources]
 ai-clients = { workspace = true }
+support-bot = { workspace = true }
 
 [tool.uv.workspace]
-members = ["libs/*"]
+members = ["libs/*", "services/*"]
 
 [dependency-groups]
 dev = [
@@ -26,5 +28,5 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["libs"]
+testpaths = ["libs", "services"]
 addopts = "--import-mode=importlib"

@@ -63,6 +63,19 @@ uv run python evals/check_embed.py      # шаг 2
 uv run python evals/check_classify.py   # шаг 1
 ```
 
+## 7. Telegram-бот
+
+1. Получить токен у [@BotFather](https://t.me/BotFather) (`/newbot`).
+2. Вписать его в `.env`: `BOT_TOKEN=...`. Файл `.env` в `.gitignore` — в git токен не попадёт.
+3. Запустить:
+
+```bash
+uv run python -m support_bot.main
+```
+
+Остановить — Ctrl+C. Бот работает в режиме polling: сам спрашивает у Telegram новые сообщения, публичный адрес не нужен.
+
+
 ## Остановить
 
 ```bash
