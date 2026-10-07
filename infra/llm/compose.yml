@@ -1,0 +1,30 @@
+# LLM — сервер, который запускает языковую модель Qwen (шаги 1 и 5).
+# Локально — Ollama: vLLM на Mac не работает, а способ подключения у них одинаковый.
+# На сервере здесь будет vLLM, код сервисов при этом не меняется.
+services:
+  llm:
+    image: ${LLM_IMAGE:?Укажите LLM_IMAGE в .env}
+    ports:
+      - "127.0.0.1:11500:11434"     # не стандартный порт на компьютере
+    volumes:
+      - llm-models:/root/.ollama    # скачанные модели сохраняются между запусками
+
+  # Одноразовая задача: дождаться сервера, скачать модель и завершиться.
+  llm-pull:
+    image: ${LLM_IMAGE:?Укажите LLM_IMAGE в .env}
+    depends_on:
+      - llm
+    environment:
+      OLLAMA_HOST: llm:11434
+    # Если сервер не поднялся за 60 секунд — задача падает с ошибкой, а не висит молча.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for i in $$(seq 1 60); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+        ollama list >/dev/null 2>&1 || { echo "LLM-сервер не поднялся за 60 секунд" >&2; exit 1; }
+        ollama pull "${LLM_MODEL:?Укажите LLM_MODEL в .env}"
+    restart: "no"
+
+volumes:
+  llm-models:

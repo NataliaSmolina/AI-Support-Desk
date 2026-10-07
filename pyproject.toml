@@ -4,7 +4,11 @@
 name = "support-desk"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["ai-clients", "support-bot"]
+dependencies = [
+    "ai-clients",
+    "psycopg[binary]>=3.3.6",
+    "support-bot",
+]
 
 [tool.uv]
 package = false
