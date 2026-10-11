@@ -8,6 +8,7 @@ dependencies = [
     "ai-clients",
     "psycopg[binary]>=3.3.6",
     "support-bot",
+    "kb-index",
 ]
 
 [tool.uv]
@@ -15,6 +16,7 @@ package = false
 
 [tool.uv.sources]
 ai-clients = { workspace = true }
+kb-index = { workspace = true }
 support-bot = { workspace = true }
 
 [tool.uv.workspace]
