@@ -1,0 +1,22 @@
+[
+  {"question": "Когда вернутся деньги за отменённый заказ?",
+   "expected": {"category": "billing", "priority": "normal", "sentiment": "calm", "wants_human": false}},
+  {"question": "С меня списали деньги два раза за один заказ!!! Верните немедленно",
+   "expected": {"category": "billing", "priority": "critical", "sentiment": "negative", "wants_human": false}},
+  {"question": "Можно ли оплатить заказ частями?",
+   "expected": {"category": "billing", "priority": "low", "sentiment": "calm", "wants_human": false}},
+  {"question": "Где сейчас мой заказ? Номер 48213",
+   "expected": {"category": "delivery", "priority": "normal", "sentiment": "calm", "wants_human": false}},
+  {"question": "ЗАКАЗ ОПАЗДЫВАЕТ УЖЕ НА НЕДЕЛЮ, ЭТО ИЗДЕВАТЕЛЬСТВО",
+   "expected": {"category": "delivery", "priority": "normal", "sentiment": "negative", "wants_human": false}},
+  {"question": "Доставляете ли вы в Казань?",
+   "expected": {"category": "delivery", "priority": "low", "sentiment": "calm", "wants_human": false}},
+  {"question": "Не могу войти в аккаунт, пишет неверный пароль",
+   "expected": {"category": "account", "priority": "normal", "sentiment": "calm", "wants_human": false}},
+  {"question": "Кто-то зашёл в мой аккаунт и поменял почту, срочно помогите",
+   "expected": {"category": "account", "priority": "critical", "sentiment": "negative", "wants_human": false}},
+  {"question": "Позовите живого оператора, бот ничего не понимает",
+   "expected": {"category": "other", "priority": "normal", "sentiment": "negative", "wants_human": true}},
+  {"question": "Вы работаете в праздники?",
+   "expected": {"category": "other", "priority": "low", "sentiment": "calm", "wants_human": false}}
+]
