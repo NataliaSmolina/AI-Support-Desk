@@ -8,7 +8,7 @@ from aiogram.types import BotCommand
 
 from support_bot import texts
 from support_bot.config import BotSettings
-from support_bot.handlers import client
+from support_bot.handlers import client, operator
 
 # Команды для кнопки «Меню» в Telegram
 COMMANDS = [
@@ -23,8 +23,10 @@ async def main() -> None:
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     settings = BotSettings()
 
-    dispatcher = Dispatcher()
+    # settings=... — всё, что передано сюда, aiogram подставляет в хендлеры по имени аргумента
+    dispatcher = Dispatcher(settings=settings)
     dispatcher.include_router(client.router)
+    dispatcher.include_router(operator.router)
 
     # async with сам закроет соединение с Telegram при остановке
     async with Bot(token=settings.bot_token.get_secret_value()) as bot:
