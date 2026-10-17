@@ -30,6 +30,17 @@ def card(question: str, draft: str) -> str:
     return f"❓ Вопрос клиента:\n{question}\n\n📝 Черновик ответа:\n{draft}"
 
 
+def card_sent(card_text: str, operator: str) -> str:
+    """Карточка после отправки: прежний текст и пометка, кто отправил."""
+    return f"{card_text}\n\n✅ Отправлено: {operator}"
+
+
+# Всплывающие окна у оператора после нажатия кнопки
+CLIENT_BLOCKED = "Клиент заблокировал бота, ответ не доставлен."
+CARD_TOO_OLD = "Карточка слишком старая, бот не может ее изменить."
+EDIT_NOT_READY = "Исправление черновика скоро будет."
+
+
 def chat_ids(chat_id: int, thread_id: int | None) -> str:
     """Ответ на /chat_id — номера группы и темы для .env."""
     return f"OPERATOR_CHAT_ID={chat_id}\nOPERATOR_THREAD_ID={thread_id or ''}"
