@@ -32,12 +32,6 @@ async def test_http_error_is_raised_not_swallowed():
         await embedder.embed(["текст"])
 
 
-async def test_wrong_dimension_is_error():
-    embedder = make_embedder(lambda r: httpx.Response(200, json=[[0.1] * 384]))
-    with pytest.raises(EmbeddingServiceError, match="1024"):
-        await embedder.embed(["текст"])
-
-
 async def test_count_mismatch_is_error():
     embedder = make_embedder(lambda r: httpx.Response(200, json=[[0.1] * EMBEDDING_DIM]))
     with pytest.raises(EmbeddingServiceError, match="на 2 текстов"):

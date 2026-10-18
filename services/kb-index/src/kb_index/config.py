@@ -18,10 +18,6 @@ class Settings(BaseSettings):
 
     kb_dir: str = "./kb"
 
-    # Имя переменной приведено к общему для проекта TEI_EMBED_URL
-    # (см. .env.example и libs/ai-clients/src/ai_clients/config.py)
-    tei_embed_url: str = "http://127.0.0.1:8081"
-
     embed_batch_size: int = Field(default=32, ge=1)
 
     embedding_dimension: int = Field(default=1024, ge=1)

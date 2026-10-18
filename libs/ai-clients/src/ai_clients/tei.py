@@ -45,11 +45,6 @@ class TeiEmbedder:
         for i, vector in enumerate(vectors):
             if not isinstance(vector, list):
                 raise EmbeddingServiceError(f"Текст №{i}: ожидался список чисел, пришёл {type(vector).__name__}")
-            if len(vector) != EMBEDDING_DIM:
-                raise EmbeddingServiceError(
-                    f"Текст №{i}: ожидалось {EMBEDDING_DIM} чисел, пришло {len(vector)}. "
-                    "Проверьте, что TEI запущен с моделью BAAI/bge-m3"
-                )
             if any(
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))

@@ -2,6 +2,8 @@ import asyncio
 import logging
 
 import asyncpg
+from ai_clients.config import AISettings
+from ai_clients.tei import TeiEmbedder
 
 from .chunker import Chunker, MarkdownHeaderChunker
 from .config import get_settings
@@ -69,6 +71,7 @@ async def main():
     )
 
     settings = get_settings()
+    ai_settings = AISettings()
     logger.info(f"Starting kb-index pipeline. Source: {settings.kb_dir}")
     
     logger.info("Connecting to PostgreSQL...")
@@ -78,11 +81,16 @@ async def main():
         logger.error(f"Failed to connect to database: {e}")
         return
 
+    tei = TeiEmbedder(
+        base_url=ai_settings.tei_embed_url,
+        timeout_s=ai_settings.request_timeout_s,
+        embedding_dim=settings.embedding_dimension,
+    )
     try:
         pipeline = Pipeline(
             loader=LocalDirectoryLoader(settings.kb_dir),
             chunker=MarkdownHeaderChunker(),
-            embedder=Embedder(tei_embed_url=settings.tei_embed_url),
+            embedder=Embedder(tei),
             db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
             embed_batch_size=settings.embed_batch_size,
         )
