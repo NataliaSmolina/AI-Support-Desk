@@ -2,64 +2,64 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from kb_index.embedder import embed_texts
+from kb_index.embedder import Embedder
 
-FAKE_EMBEDDINGS = [[0.1] * 384, [0.2] * 384]
+TEI_URL = "http://tei.test"
+EMBEDDING_DIM = 1024
 
 
-def make_mock_response(json_data, status_code=200):
-    """Создаёт мок HTTP-ответа."""
-    response = httpx.Response(
+def make_fake_embeddings(count: int) -> list[list[float]]:
+    return [[0.1] * EMBEDDING_DIM for _ in range(count)]
+
+
+def make_mock_response(json_data, status_code: int = 200) -> httpx.Response:
+    return httpx.Response(
         status_code=status_code,
         json=json_data,
-        request=httpx.Request("POST", "http://test/embed"),
+        request=httpx.Request("POST", f"{TEI_URL}/embed"),
     )
-    return response
+
+
+def make_mock_client(response: httpx.Response) -> AsyncMock:
+    mock_client = AsyncMock()
+    mock_client.post.return_value = response
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    return mock_client
 
 
 @pytest.mark.asyncio
 async def test_embed_empty_list_returns_empty():
     """Пустой список текстов не должен делать HTTP-запрос."""
-    result = await embed_texts([])
+    result = await Embedder(tei_embed_url=TEI_URL).embed([])
     assert result == []
 
 
 @pytest.mark.asyncio
 async def test_embed_returns_embeddings():
     """Успешный ответ TEI возвращает список векторов."""
-    mock_response = make_mock_response(FAKE_EMBEDDINGS)
+    fake_embeddings = make_fake_embeddings(2)
 
     with patch("kb_index.embedder.httpx.AsyncClient") as MockClient:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        MockClient.return_value = mock_client
+        MockClient.return_value = make_mock_client(make_mock_response(fake_embeddings))
+        result = await Embedder(tei_embed_url=TEI_URL).embed(["text1", "text2"])
 
-        result = await embed_texts(["text1", "text2"])
-
-    assert result == FAKE_EMBEDDINGS
+    assert result == fake_embeddings
     assert len(result) == 2
-    assert len(result[0]) == 384
+    assert len(result[0]) == EMBEDDING_DIM
 
 
 @pytest.mark.asyncio
 async def test_embed_sends_correct_payload():
     """Проверяем, что запрос к TEI содержит правильные поля."""
-    mock_response = make_mock_response([[0.1] * 384])
-
     with patch("kb_index.embedder.httpx.AsyncClient") as MockClient:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client = make_mock_client(make_mock_response(make_fake_embeddings(1)))
         MockClient.return_value = mock_client
 
-        await embed_texts(["hello"])
+        await Embedder(tei_embed_url=TEI_URL).embed(["hello"])
 
-        # Проверяем, что post был вызван с правильными аргументами
         call_args = mock_client.post.call_args
-        assert call_args.args[0].endswith("/embed")
+        assert call_args.args[0] == f"{TEI_URL}/embed"
         payload = call_args.kwargs["json"]
         assert payload["inputs"] == ["hello"]
         assert payload["truncate"] is True
@@ -68,35 +68,26 @@ async def test_embed_sends_correct_payload():
 @pytest.mark.asyncio
 async def test_embed_raises_on_http_error():
     """При ошибке TEI (500) должно выбрасываться исключение."""
-    mock_response = httpx.Response(
+    error_response = httpx.Response(
         status_code=500,
-        request=httpx.Request("POST", "http://test/embed"),
+        request=httpx.Request("POST", f"{TEI_URL}/embed"),
     )
 
     with patch("kb_index.embedder.httpx.AsyncClient") as MockClient:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        MockClient.return_value = mock_client
+        MockClient.return_value = make_mock_client(error_response)
 
         with pytest.raises(httpx.HTTPStatusError):
-            await embed_texts(["text"])
+            await Embedder(tei_embed_url=TEI_URL).embed(["text"])
 
 
 @pytest.mark.asyncio
 async def test_embed_single_text():
     """Один текст возвращает один вектор."""
-    mock_response = make_mock_response([[0.5] * 384])
+    fake_embeddings = make_fake_embeddings(1)
 
     with patch("kb_index.embedder.httpx.AsyncClient") as MockClient:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        MockClient.return_value = mock_client
-
-        result = await embed_texts(["single"])
+        MockClient.return_value = make_mock_client(make_mock_response(fake_embeddings))
+        result = await Embedder(tei_embed_url=TEI_URL).embed(["single"])
 
     assert len(result) == 1
-    assert len(result[0]) == 384
+    assert len(result[0]) == EMBEDDING_DIM
