@@ -1,54 +1,16 @@
 """Проверка генерации ответов через Qwen3:8B в Docker."""
 
 import asyncio
+import json
 import time
+from pathlib import Path
 
 from ai_clients.config import AISettings
 from ai_clients.generator import LlmAnswerGenerator
 
-
-TEST_CASES = [
-    {
-        "name": "Ответ есть в документах",
-        "question": "Когда мне вернут деньги за отменённый заказ?",
-        "documents": [
-            {
-                "id": "refund-policy",
-                "text": (
-                    "После отмены заказа деньги возвращаются "
-                    "в течение 10 рабочих дней на исходный способ оплаты."
-                ),
-            }
-        ],
-    },
-    {
-        "name": "Информации недостаточно",
-        "question": "Можно ли оплатить заказ криптовалютой?",
-        "documents": [
-            {
-                "id": "payment-policy",
-                "text": (
-                    "Магазин принимает банковские карты "
-                    "Visa и Mastercard."
-                ),
-            }
-        ],
-    },
-    {
-        "name": "Несколько документов",
-        "question": "Сколько стоит доставка в Казань и сколько она занимает?",
-        "documents": [
-            {
-                "id": "delivery-price",
-                "text": "Стоимость доставки в Казань составляет 350 рублей.",
-            },
-            {
-                "id": "delivery-time",
-                "text": "Срок доставки в Казань составляет 3–5 рабочих дней.",
-            },
-        ],
-    },
-]
+TEST_CASES = json.loads(
+    Path("evals/data/generation_cases.json").read_text(encoding="utf-8")
+)
 
 
 async def main():
