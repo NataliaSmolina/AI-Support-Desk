@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field
-from typing import List
 import hashlib
+from dataclasses import dataclass, field
+
 
 @dataclass
 class Document:
@@ -17,7 +17,7 @@ class Document:
 class Chunk:
     """Represents a semantic chunk of a document."""
     text: str
-    headers: List[str] = field(default_factory=list)
+    headers: list[str] = field(default_factory=list)
     source_file: str = ""
     content_hash: str = ""
     
