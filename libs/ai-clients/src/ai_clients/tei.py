@@ -1,5 +1,7 @@
 """TEI: перевод текста в набор чисел (шаг 2 и kb-index), модель bge-m3."""
 
+import math
+
 import httpx
 
 EMBEDDING_DIM = 1024  # столько чисел выдаёт bge-m3 на один текст
@@ -30,19 +32,27 @@ class TeiEmbedder:
                 f"TEI вернул HTTP {response.status_code}: {response.text[:500]}"
             )
 
-        vectors = response.json()
+        try:
+            vectors = response.json()
+        except ValueError as exc:
+            raise EmbeddingServiceError("TEI вернул некорректный JSON") from exc
+
         if not isinstance(vectors, list) or len(vectors) != len(texts):
             raise EmbeddingServiceError(
                 f"TEI вернул {len(vectors) if isinstance(vectors, list) else type(vectors).__name__} "
                 f"наборов чисел на {len(texts)} текстов"
             )
         for i, vector in enumerate(vectors):
-            if len(vector) != EMBEDDING_DIM:
-                raise EmbeddingServiceError(
-                    f"Текст №{i}: ожидалось {EMBEDDING_DIM} чисел, пришло {len(vector)}. "
-                    "Проверьте, что TEI запущен с моделью BAAI/bge-m3"
-                )
-        return vectors
+            if not isinstance(vector, list):
+                raise EmbeddingServiceError(f"Текст №{i}: ожидался список чисел, пришёл {type(vector).__name__}")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in vector
+            ):
+                raise EmbeddingServiceError(f"Текст №{i}: вектор содержит нечисловое или не конечное значение")
+        return [[float(value) for value in vector] for vector in vectors]
 
     async def aclose(self) -> None:
         await self._client.aclose()

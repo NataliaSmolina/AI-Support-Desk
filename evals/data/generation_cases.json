@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Ответ есть в документах",
+    "question": "Когда мне вернут деньги за отменённый заказ?",
+    "documents": [
+      {
+        "id": "refund-policy",
+        "text": "После отмены заказа деньги возвращаются в течение 10 рабочих дней на исходный способ оплаты."
+      }
+    ],
+    "expected": {
+      "answer_present": true,
+      "source_ids": ["refund-policy"],
+      "needs_escalation": false
+    }
+  },
+  {
+    "name": "Информации недостаточно",
+    "question": "Можно ли оплатить заказ криптовалютой?",
+    "documents": [
+      {
+        "id": "payment-policy",
+        "text": "Магазин принимает банковские карты Visa и Mastercard."
+      }
+    ],
+    "expected": {
+      "answer_present": false,
+      "source_ids": [],
+      "needs_escalation": true
+    }
+  },
+  {
+    "name": "Несколько документов",
+    "question": "Сколько стоит доставка в Казань и сколько она занимает?",
+    "documents": [
+      {
+        "id": "delivery-price",
+        "text": "Стоимость доставки в Казань составляет 350 рублей."
+      },
+      {
+        "id": "delivery-time",
+        "text": "Срок доставки в Казань составляет 3–5 рабочих дней."
+      }
+    ],
+    "expected": {
+      "answer_present": true,
+      "source_ids": ["delivery-price", "delivery-time"],
+      "needs_escalation": false
+    }
+  }
+]

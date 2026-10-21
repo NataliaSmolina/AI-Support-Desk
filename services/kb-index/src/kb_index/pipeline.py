@@ -1,90 +1,102 @@
 import asyncio
 import logging
-from pathlib import Path
 
 import asyncpg
+from ai_clients.config import AISettings
+from ai_clients.tei import TeiEmbedder
 
-from .chunker import chunk_markdown
-from .config import settings
-from .database import cleanup_orphans, get_existing_hashes, init_db, upsert_chunks
-from .embedder import embed_texts
-from .models import Document
+from .chunker import Chunker, MarkdownHeaderChunker
+from .config import get_settings
+from .database import DBLoader
+from .embedder import Embedder
+from .loader import Loader, LocalDirectoryLoader
 
 logger = logging.getLogger(__name__)
 
-def load_documents(directory: str) -> list[Document]:
-    """Читает kb/*.md (Блок 1 схемы)"""
-    documents = []
-    path = Path(directory)
-    if not path.exists() or not path.is_dir():
-        raise ValueError(f"Directory not found: {directory}")
-    
-    for file_path in path.rglob("*.md"):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            documents.append(Document(source_file=str(file_path), content=content))
-    return documents
 
-async def run_pipeline():
-    """Выполняет ETL пайплайн kb-index с записью в PostgreSQL"""
+class Pipeline:
+    def __init__(self, loader: Loader, chunker: Chunker, embedder: Embedder, db_loader: DBLoader, embed_batch_size: int):
+        self.loader = loader
+        self.chunker = chunker
+        self.embedder = embedder
+        self.db_loader = db_loader
+        self.embed_batch_size = embed_batch_size
+
+    async def run(self):
+        """Выполняет ETL пайплайн kb-index с записью в PostgreSQL"""
+        logger.info(f"Starting kb-index pipeline. Source: {getattr(self.loader, 'directory', '')}")
+        
+        await self.db_loader.init()
+
+        docs = self.loader.load()
+        logger.info(f"Loaded {len(docs)} markdown documents.")
+
+        total_new = 0
+        total_skipped = 0
+
+        for doc in docs:
+            chunks = self.chunker.chunk(doc)
+            if not chunks:
+                await self.db_loader.cleanup_orphans(doc.source_file, [])
+                continue
+            
+            existing_hashes = await self.db_loader.get_existing_hashes(doc.source_file)
+            chunks_to_process = [c for c in chunks if c.content_hash not in existing_hashes]
+            total_skipped += (len(chunks) - len(chunks_to_process))
+
+            if chunks_to_process:
+                logger.info(f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed chunks (skipped {len(chunks) - len(chunks_to_process)})")
+                
+                for i in range(0, len(chunks_to_process), self.embed_batch_size):
+                    batch = chunks_to_process[i:i + self.embed_batch_size]
+                    texts = [c.text for c in batch]
+                    
+                    embeddings = await self.embedder.embed(texts)
+                    await self.db_loader.upsert_chunks(batch, embeddings)
+                    total_new += len(batch)
+            else:
+                logger.info(f"Skipped {doc.source_file}: no changes detected.")
+
+            valid_hashes = [c.content_hash for c in chunks]
+            await self.db_loader.cleanup_orphans(doc.source_file, valid_hashes)
+
+        logger.info(f"Pipeline finished. Upserted: {total_new}, Skipped (unchanged): {total_skipped}")
+
+
+async def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
-    
+
+    settings = get_settings()
+    ai_settings = AISettings()
     logger.info(f"Starting kb-index pipeline. Source: {settings.kb_dir}")
     
-    # 1. Подключение к БД (Блок 4 схемы)
     logger.info("Connecting to PostgreSQL...")
     try:
         pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to connect to database: {e}")
         return
-        
-    await init_db(pool)
 
-    # 2. Чтение документов
-    docs = load_documents(settings.kb_dir)
-    logger.info(f"Loaded {len(docs)} markdown documents.")
-
-    total_new = 0
-    total_skipped = 0
-
-    # 3. Обработка каждого документа
-    for doc in docs:
-        # Чанкинг по заголовкам (Блок 2 схемы)
-        chunks = chunk_markdown(doc)
-        if not chunks:
-            await cleanup_orphans(pool, doc.source_file, [])
-            continue
-        
-        # Инкрементальность: проверяем, что уже есть в БД
-        existing_hashes = await get_existing_hashes(pool, doc.source_file)
-        chunks_to_process = [c for c in chunks if c.content_hash not in existing_hashes]
-        total_skipped += (len(chunks) - len(chunks_to_process))
-
-        if chunks_to_process:
-            logger.info(f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed chunks (skipped {len(chunks) - len(chunks_to_process)})")
-            
-            # Векторизация (Блок 3 схемы)
-            for i in range(0, len(chunks_to_process), settings.embed_batch_size):
-                batch = chunks_to_process[i:i + settings.embed_batch_size]
-                texts = [c.text for c in batch]
-                
-                embeddings = await embed_texts(texts)
-                await upsert_chunks(pool, batch, embeddings)
-                total_new += len(batch)
-        else:
-            logger.info(f"Skipped {doc.source_file}: no changes detected.")
-
-        # Очистка удаленных из файла чанков
-        valid_hashes = [c.content_hash for c in chunks]
-        await cleanup_orphans(pool, doc.source_file, valid_hashes)
-
-    logger.info(f"Pipeline finished. Upserted: {total_new}, Skipped (unchanged): {total_skipped}")
-    await pool.close()
+    tei = TeiEmbedder(
+        base_url=ai_settings.tei_embed_url,
+        timeout_s=ai_settings.request_timeout_s,
+        embedding_dim=settings.embedding_dimension,
+    )
+    try:
+        pipeline = Pipeline(
+            loader=LocalDirectoryLoader(settings.kb_dir),
+            chunker=MarkdownHeaderChunker(),
+            embedder=Embedder(tei),
+            db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
+            embed_batch_size=settings.embed_batch_size,
+        )
+        await pipeline.run()
+    finally:
+        await pool.close()
 
 if __name__ == "__main__":
-    asyncio.run(run_pipeline())
+    asyncio.run(main())

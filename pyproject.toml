@@ -31,4 +31,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["libs", "services"]
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m 'not integration'"
+markers = [
+    "integration: integration tests requiring Docker (TEI + Postgres). Run with: pytest -m integration",
+]

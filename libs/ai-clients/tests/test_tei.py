@@ -1,5 +1,7 @@
 """Проверка логики embed без запущенного TEI: ответы TEI подменяются."""
 
+import json
+
 import httpx
 import pytest
 
@@ -14,7 +16,8 @@ def make_embedder(handler) -> TeiEmbedder:
 async def test_returns_vector_per_text_in_order():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/embed"
-        texts = __import__("json").loads(request.content)["inputs"]
+        texts = json.loads(request.content)["inputs"]
+        assert texts == ["первый", "второй"]
         return httpx.Response(200, json=[[float(i)] * EMBEDDING_DIM for i, _ in enumerate(texts)])
 
     vectors = await make_embedder(handler).embed(["первый", "второй"])
@@ -29,16 +32,37 @@ async def test_http_error_is_raised_not_swallowed():
         await embedder.embed(["текст"])
 
 
-async def test_wrong_dimension_is_error():
-    embedder = make_embedder(lambda r: httpx.Response(200, json=[[0.1] * 384]))
-    with pytest.raises(EmbeddingServiceError, match="1024"):
-        await embedder.embed(["текст"])
-
-
 async def test_count_mismatch_is_error():
     embedder = make_embedder(lambda r: httpx.Response(200, json=[[0.1] * EMBEDDING_DIM]))
     with pytest.raises(EmbeddingServiceError, match="на 2 текстов"):
         await embedder.embed(["один", "два"])
+
+
+async def test_invalid_json_is_error():
+    embedder = make_embedder(lambda r: httpx.Response(200, content=b"not json"))
+    with pytest.raises(EmbeddingServiceError, match="некорректный JSON"):
+        await embedder.embed(["текст"])
+
+
+async def test_non_list_vector_is_error():
+    embedder = make_embedder(lambda r: httpx.Response(200, json=[None]))
+    with pytest.raises(EmbeddingServiceError, match="ожидался список чисел"):
+        await embedder.embed(["текст"])
+
+
+@pytest.mark.parametrize("value", ["bad", True, float("inf"), float("nan")])
+async def test_non_numeric_or_non_finite_vector_value_is_error(value):
+    body = json.dumps([[value] + [0.0] * (EMBEDDING_DIM - 1)], allow_nan=True)
+    embedder = make_embedder(lambda r: httpx.Response(200, content=body))
+    with pytest.raises(EmbeddingServiceError, match="нечисловое или не конечное"):
+        await embedder.embed(["текст"])
+
+
+async def test_integer_values_are_returned_as_floats():
+    embedder = make_embedder(lambda r: httpx.Response(200, json=[[1] * EMBEDDING_DIM]))
+    vectors = await embedder.embed(["текст"])
+    assert vectors[0][0] == 1.0
+    assert isinstance(vectors[0][0], float)
 
 
 async def test_connection_failure_is_error():
