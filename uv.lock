@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 
 [manifest]
@@ -8,6 +8,7 @@ members = [
     "kb-index",
     "support-bot",
     "support-desk",
+    "support-worker",
 ]
 
 [[package]]
@@ -1241,6 +1242,7 @@ dependencies = [
     { name = "kb-index" },
     { name = "psycopg", extra = ["binary"] },
     { name = "support-bot" },
+    { name = "support-worker" },
 ]
 
 [package.dev-dependencies]
@@ -1255,12 +1257,30 @@ requires-dist = [
     { name = "kb-index", editable = "services/kb-index" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
     { name = "support-bot", editable = "services/bot" },
+    { name = "support-worker", editable = "services/worker" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+]
+
+[[package]]
+name = "support-worker"
+version = "0.1.0"
+source = { editable = "services/worker" }
+dependencies = [
+    { name = "ai-clients" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-clients", editable = "libs/ai-clients" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
+    { name = "python-dotenv", specifier = ">=1.0" },
 ]
 
 [[package]]
