@@ -1,9 +1,18 @@
 """Кнопки под сообщениями бота."""
 
+from enum import StrEnum
+
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from support_bot import texts
+
+
+class Action(StrEnum):
+    """Что можно сделать с черновиком. Другие значения – ошибка, а не тихо неработающая кнопка."""
+
+    SEND = "send"
+    EDIT = "edit"
 
 
 class DraftAction(CallbackData, prefix="draft"):
@@ -13,7 +22,7 @@ class DraftAction(CallbackData, prefix="draft"):
     CallbackData сам превращает объект в строку (pack) и обратно (unpack).
     """
 
-    action: str  # "send" или "edit"
+    action: Action
     chat_id: int  # куда отправить ответ — личка клиента
 
 
@@ -21,11 +30,11 @@ def draft_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     """Кнопки «Отправить» и «Исправить» под карточкой оператора."""
     send = InlineKeyboardButton(
         text=texts.BUTTON_SEND,
-        callback_data=DraftAction(action="send", chat_id=chat_id).pack(),
+        callback_data=DraftAction(action=Action.SEND, chat_id=chat_id).pack(),
     )
     edit = InlineKeyboardButton(
         text=texts.BUTTON_EDIT,
-        callback_data=DraftAction(action="edit", chat_id=chat_id).pack(),
+        callback_data=DraftAction(action=Action.EDIT, chat_id=chat_id).pack(),
     )
     # Список списков: каждый внутренний список — один ряд кнопок
     return InlineKeyboardMarkup(inline_keyboard=[[send, edit]])

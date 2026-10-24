@@ -6,7 +6,8 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from support_bot import texts
-from support_bot.keyboards import DraftAction
+from support_bot.config import BotSettings
+from support_bot.keyboards import Action, DraftAction
 
 # Хендлеры этого файла работают только в группах
 GROUP_CHAT = F.chat.type.in_({"group", "supergroup"})
@@ -21,9 +22,21 @@ async def chat_id(message: Message) -> None:
     await message.answer(texts.chat_ids(message.chat.id, message.message_thread_id))
 
 
-# DraftAction.filter(...) ловит только кнопки карточки, и только с action="send".
+def not_operator(callback: CallbackQuery, settings: BotSettings) -> bool:
+    """Фильтр: нажал не оператор. settings aiogram подставит так же, как в хендлеры."""
+    return callback.from_user.id not in settings.operator_ids
+
+
+# Стоит первым: хендлеры проверяются сверху вниз, поэтому нажатие не-оператора
+# до «Отправить» и «Исправить» не доходит. Проверка написана один раз для всех кнопок.
+@router.callback_query(DraftAction.filter(), not_operator)
+async def deny_not_operator(callback: CallbackQuery) -> None:
+    await callback.answer(texts.NOT_OPERATOR, show_alert=True)
+
+
+# DraftAction.filter(...) ловит только кнопки карточки, и только с действием SEND.
 # Распакованные данные кнопки aiogram передаст в аргумент callback_data.
-@router.callback_query(DraftAction.filter(F.action == "send"))
+@router.callback_query(DraftAction.filter(F.action == Action.SEND))
 async def send_draft(callback: CallbackQuery, callback_data: DraftAction, bot: Bot) -> None:
     card = callback.message
     # Telegram не дает менять сообщения старше 48 часов – тогда вместо Message приходит заглушка
@@ -44,7 +57,7 @@ async def send_draft(callback: CallbackQuery, callback_data: DraftAction, bot: B
     await callback.answer()
 
 
-@router.callback_query(DraftAction.filter(F.action == "edit"))
+@router.callback_query(DraftAction.filter(F.action == Action.EDIT))
 async def edit_draft(callback: CallbackQuery) -> None:
     # Заглушка до следующего этапа
     await callback.answer(texts.EDIT_NOT_READY, show_alert=True)
