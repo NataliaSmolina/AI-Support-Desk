@@ -1,11 +1,10 @@
 import re
-from abc import ABC, abstractmethod
+from typing import Protocol
 
 from .models import Chunk, Document
 
 
-class Chunker(ABC):
-    @abstractmethod
+class Chunker(Protocol):
     def chunk(self, doc: Document) -> list[Chunk]:
         """Разбивает документ на смысловые чанки."""
 
@@ -14,7 +13,7 @@ class Chunker(ABC):
 HEADER_REGEX = re.compile(r'^(#{1,6})\s+(.*)$')
 
 
-class MarkdownHeaderChunker(Chunker):
+class MarkdownHeaderChunker:
     def chunk(self, doc: Document) -> list[Chunk]:
         """
         Splits a markdown document into chunks based on headers.
@@ -31,14 +30,12 @@ class MarkdownHeaderChunker(Chunker):
             text = '\n'.join(current_text_lines).strip()
             if text:
                 # Build hierarchy list ordered by header level (H1 -> H2 -> H3)
-                hierarchy = [current_headers[i] for i in sorted(current_headers.keys())]
-                chunk = Chunk(
+                hierarchy = tuple(current_headers[i] for i in sorted(current_headers.keys()))
+                chunks.append(Chunk(
                     text=text,
                     headers=hierarchy,
-                    source_file=doc.source_file
-                )
-                chunk.content_hash = chunk.compute_hash()
-                chunks.append(chunk)
+                    source_file=doc.source_file,
+                ))
             current_text_lines.clear()
 
         for line in lines:

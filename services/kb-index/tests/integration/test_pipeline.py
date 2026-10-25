@@ -29,9 +29,9 @@ def _ensure_containers(containers):
 
 async def _acquire_connection() -> asyncpg.Connection:
     """Собирает URL из окружения и возвращает подключение к БД."""
-    from kb_index.config import get_settings
+    from kb_index.config import Settings
 
-    settings = get_settings()
+    settings = Settings()
     return await asyncpg.connect(settings.database_url)
 
 
@@ -40,9 +40,9 @@ async def test_full_pipeline_end_to_end(tmp_kb_dir, _ensure_containers):
     """Полный сценарий: 2 файла -> индексация -> проверка в БД -> изменение -> переиндексация."""
 
     from kb_index.chunker import MarkdownHeaderChunker
-    from kb_index.config import get_settings
+    from kb_index.config import Settings
     from kb_index.database import DBLoader
-    from kb_index.embedder import Embedder
+    from kb_index.embedder import TeiEmbedderAdapter
     from kb_index.loader import LocalDirectoryLoader
     from kb_index.pipeline import Pipeline
 
@@ -64,7 +64,7 @@ async def test_full_pipeline_end_to_end(tmp_kb_dir, _ensure_containers):
     )
 
     # -- ШАГ 2. Собираем пайплайн из компонентов --
-    settings = get_settings()
+    settings = Settings()
     ai_settings = AISettings()
     pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=5)
 
@@ -76,7 +76,7 @@ async def test_full_pipeline_end_to_end(tmp_kb_dir, _ensure_containers):
         pipeline = Pipeline(
             loader=LocalDirectoryLoader(settings.kb_dir),
             chunker=MarkdownHeaderChunker(),
-            embedder=Embedder(tei),
+            embedder=TeiEmbedderAdapter(tei),
             db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
             embed_batch_size=settings.embed_batch_size,
         )
@@ -161,17 +161,17 @@ async def test_embedder_contract_directly(_ensure_containers):
     """Прямая проверка контракта TEI /embed без полного пайплайна.
 
     """
-    from kb_index.config import get_settings
-    from kb_index.embedder import Embedder
+    from kb_index.config import Settings
+    from kb_index.embedder import TeiEmbedderAdapter
 
-    settings = get_settings()
+    settings = Settings()
     ai_settings = AISettings()
 
     tei = TeiEmbedder(
             base_url=ai_settings.tei_embed_url,
             timeout_s=ai_settings.request_timeout_s,
         )
-    embedder = Embedder(tei)
+    embedder = TeiEmbedderAdapter(tei)
 
     texts = ["Hello world", "Привет, мир", "日本語"]
     embeddings = await embedder.embed(texts)
@@ -189,10 +189,10 @@ async def test_embedder_contract_directly(_ensure_containers):
 @pytest.mark.asyncio
 async def test_database_schema_migration_safe(_ensure_containers):
     """Проверяет, что DBLoader.init() идемпотентен и создаёт pgvector."""
-    from kb_index.config import get_settings
+    from kb_index.config import Settings
     from kb_index.database import DBLoader
 
-    settings = get_settings()
+    settings = Settings()
     pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=2)
     try:
         db = DBLoader(pool, embedding_dimension=settings.embedding_dimension)

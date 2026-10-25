@@ -42,6 +42,12 @@ class DBLoader:
         if not chunks:
             return
 
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunk/embedding count mismatch: {len(chunks)} chunks, "
+                f"{len(embeddings)} embeddings"
+            )
+
         records = [
             (
                 chunk.content_hash,

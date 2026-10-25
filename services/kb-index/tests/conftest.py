@@ -14,6 +14,7 @@ PROJECT_NAME = "kb-index-integration"
 # Environment variables for integration tests
 INTEGRATION_ENV = {
     "TEI_EMBED_URL": "http://127.0.0.1:8082",
+    "KB_DIR": str(Path(__file__).parent),
     "EMBED_BATCH_SIZE": "8",
     "EMBEDDING_DIMENSION": "384",
     "POSTGRES_HOST": "127.0.0.1",
@@ -37,10 +38,6 @@ def integration_environment():
     for key, value in INTEGRATION_ENV.items():
         os.environ[key] = value
 
-    # Clear Settings cache so it picks up new env vars
-    from kb_index.config import get_settings
-    get_settings.cache_clear()
-
     yield
 
     # Restore original values
@@ -49,9 +46,6 @@ def integration_environment():
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
-
-    # Clear cache after test
-    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -110,9 +104,6 @@ def tmp_kb_dir(tmp_path: Path) -> Path:
     kb_dir = tmp_path / "kb"
     kb_dir.mkdir()
     os.environ["KB_DIR"] = str(kb_dir)
-
-    from kb_index.config import get_settings
-    get_settings.cache_clear()
 
     return kb_dir
 
