@@ -106,14 +106,16 @@ class LlmAnswerGenerator:
             raise GenerationError(str(exc)) from exc
         try:
             result = GeneratedAnswer.model_validate_json(_strip_think(content))
-        except ValidationError as exc:
-            raise GenerationError(f"Ответ модели не по формату: {content[:500]!r}") from exc
+        except ValidationError:
+            raise GenerationError("Ответ модели не по формату: ожидалась схема GeneratedAnswer") from None
         if any(source_id not in ids for source_id in result.source_ids):
             raise GenerationError("Модель указала источник, которого нет среди документов")
         if result.answer is None and (result.source_ids or not result.needs_escalation):
             raise GenerationError("Отсутствующий ответ должен требовать эскалации без источников")
         if result.answer is not None and not result.answer.strip():
             raise GenerationError("Модель вернула пустой текст ответа")
+        if result.answer is not None and (not result.source_ids or result.needs_escalation):
+            raise GenerationError("Ответ с текстом должен содержать источники и не требовать эскалации")
         return result
 
     async def aclose(self) -> None:
