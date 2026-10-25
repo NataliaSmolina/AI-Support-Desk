@@ -26,14 +26,33 @@ def test_generation_mismatches_checks_answer_sources_and_escalation():
         "answer_present": True,
         "source_ids": ["price", "time"],
         "needs_escalation": False,
+        "required_facts": ["350 рублей", "3-5 рабочих дней"],
     }
     actual = {
-        "answer": "Цена — 350 рублей.",
+        "answer": "Цена — 350 рублей. Срок — 3–5 рабочих дней.",
         "source_ids": ["price"],
         "needs_escalation": False,
     }
     assert generation_mismatches(expected, actual) == [
         "источники: ожидались ['price', 'time'], получены ['price']"
+    ]
+
+
+def test_generation_mismatches_checks_required_answer_facts():
+    expected = {
+        "answer_present": True,
+        "source_ids": ["refund"],
+        "needs_escalation": False,
+        "required_facts": ["10 рабочих дней", "исходный способ оплаты"],
+    }
+    actual = {
+        "answer": "Деньги вернут в течение 10 рабочих дней.",
+        "source_ids": ["refund"],
+        "needs_escalation": False,
+    }
+
+    assert generation_mismatches(expected, actual) == [
+        "в ответе отсутствует обязательный факт: 'исходный способ оплаты'"
     ]
 
 

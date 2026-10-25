@@ -13,6 +13,7 @@ import json
 import platform
 import sys
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,8 @@ def classification_mismatches(expected: dict[str, Any], actual: dict[str, Any]) 
 
 def generation_mismatches(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     failures = []
-    answer_present = actual["answer"] is not None
+    answer = actual["answer"]
+    answer_present = answer is not None
     if answer_present != expected["answer_present"]:
         failures.append(f"наличие ответа: ожидалось {expected['answer_present']}, получено {answer_present}")
     if (
@@ -71,7 +73,18 @@ def generation_mismatches(expected: dict[str, Any], actual: dict[str, Any]) -> l
             "эскалация: ожидалось "
             f"{expected['needs_escalation']}, получено {actual['needs_escalation']}"
         )
+    if isinstance(answer, str):
+        normalized_answer = normalize_fact_text(answer)
+        for fact in expected.get("required_facts", []):
+            if normalize_fact_text(fact) not in normalized_answer:
+                failures.append(f"в ответе отсутствует обязательный факт: {fact!r}")
     return failures
+
+
+def normalize_fact_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = normalized.translate(str.maketrans({"–": "-", "—": "-", "−": "-"}))
+    return " ".join(normalized.split())
 
 
 def markdown_value(value: Any) -> str:
