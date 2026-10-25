@@ -1,5 +1,7 @@
 """Сообщения и кнопки в группе операторов."""
 
+import logging
+
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
@@ -14,6 +16,7 @@ GROUP_CHAT = F.chat.type.in_({"group", "supergroup"})
 
 router = Router()
 router.message.filter(GROUP_CHAT)
+logger = logging.getLogger(__name__)
 
 
 @router.message(Command("chat_id"))
@@ -30,7 +33,9 @@ def not_operator(callback: CallbackQuery, settings: BotSettings) -> bool:
 # Стоит первым: хендлеры проверяются сверху вниз, поэтому нажатие не-оператора
 # до «Отправить» и «Исправить» не доходит. Проверка написана один раз для всех кнопок.
 @router.callback_query(DraftAction.filter(), not_operator)
-async def deny_not_operator(callback: CallbackQuery) -> None:
+async def deny_not_operator(callback: CallbackQuery, settings: BotSettings) -> None:
+    # Видно в терминале, какой ID пришел, – сразу понятно, что вписать в OPERATOR_IDS
+    logger.warning("Отказ: нажал id=%s, операторы=%s", callback.from_user.id, settings.operator_ids)
     await callback.answer(texts.NOT_OPERATOR, show_alert=True)
 
 

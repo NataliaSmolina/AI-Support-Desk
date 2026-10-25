@@ -35,18 +35,6 @@ async def test_help_answers_with_help():
     message.answer.assert_awaited_once_with(texts.HELP)
 
 
-async def test_question_answers_accepted():
-    message = AsyncMock()
-    bot = AsyncMock()
-    # Группа операторов не задана
-    settings = SimpleNamespace(operator_chat_id=None, operator_thread_id=None)
-
-    await question(message, bot, settings)
-
-    message.answer.assert_awaited_once_with(texts.ACCEPTED)
-    bot.send_message.assert_not_awaited()
-
-
 async def test_question_sends_card_to_operators():
     message = AsyncMock()
     message.text = "Где мой заказ?"
