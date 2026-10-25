@@ -16,3 +16,7 @@ class BotSettings(BaseSettings):
     operator_chat_id: int | None = None
     # Тема (топик) в группе. None — общая тема
     operator_thread_id: int | None = None
+
+    # Telegram ID тех, кто может нажимать кнопки карточки. В .env – списком: OPERATOR_IDS=[123, 456]
+    # Пустой список – не может никто. Свой ID бот пишет в лог на /start
+    operator_ids: list[int] = []

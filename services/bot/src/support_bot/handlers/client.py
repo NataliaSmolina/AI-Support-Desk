@@ -29,12 +29,17 @@ async def help_command(message: Message) -> None:
     await message.answer(texts.HELP)
 
 
-# F.text — «в сообщении есть текст». Команды /start и /help тоже текст,
-# но их ловят хендлеры выше: проверка идёт сверху вниз до первого подходящего.
-@router.message(F.text)
+# F.text – обычный текст, F.caption – подпись к фото или файлу. «|» значит «или».
+# Команды /start и /help тоже текст, но их ловят хендлеры выше: проверка идёт сверху вниз.
+@router.message(F.text | F.caption)
 async def question(message: Message, bot: Bot, settings: BotSettings) -> None:
     # bot и settings aiogram подставит сам — см. Dispatcher(settings=...) в main.py
+    # У обычного сообщения текст в text, у фото с подписью – в caption
+    text = message.text or message.caption
+
     await message.answer(texts.ACCEPTED)
+    if message.caption:
+        await message.answer(texts.ATTACHMENT_IGNORED)
 
     if settings.operator_chat_id is None:
         return
@@ -43,12 +48,12 @@ async def question(message: Message, bot: Bot, settings: BotSettings) -> None:
     await bot.send_message(
         chat_id=settings.operator_chat_id,
         message_thread_id=settings.operator_thread_id,
-        text=texts.card(message.text, texts.FAKE_DRAFT),
+        text=texts.card(text, texts.FAKE_DRAFT),
         reply_markup=draft_keyboard(message.chat.id),
     )
 
 
-# ~F.text — «в сообщении нет текста»: фото, стикер, голосовое, файл.
+# Сюда доходит только то, где нет ни текста, ни подписи: стикер, голосовое, фото без подписи.
 @router.message(~F.text)
 async def not_text(message: Message) -> None:
     await message.answer(texts.ONLY_TEXT)
