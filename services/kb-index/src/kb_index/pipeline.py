@@ -1,17 +1,13 @@
-import asyncio
 import logging
 
-import asyncpg
-from ai_clients.config import AISettings
-from ai_clients.tei import TeiEmbedder
-
-from .chunker import Chunker, MarkdownHeaderChunker
-from .config import get_settings
+from .chunker import Chunker
 from .database import DBLoader
 from .embedder import Embedder
-from .loader import Loader, LocalDirectoryLoader
+from .loader import Loader
 
 logger = logging.getLogger(__name__)
+
+INDEX_VERSION = "markdown-header-v1"
 
 
 class Pipeline:
@@ -24,79 +20,64 @@ class Pipeline:
 
     async def run(self):
         """Выполняет ETL пайплайн kb-index с записью в PostgreSQL"""
-        logger.info(f"Starting kb-index pipeline. Source: {getattr(self.loader, 'directory', '')}")
-        
-        await self.db_loader.init()
+        logger.info(f"Starting kb-index pipeline. Source: {self.loader.source()}")
 
         docs = self.loader.load()
         logger.info(f"Loaded {len(docs)} markdown documents.")
 
         total_new = 0
         total_skipped = 0
+        total_skipped_docs = 0
+        active_sources: list[str] = []
 
         for doc in docs:
-            chunks = self.chunker.chunk(doc)
-            if not chunks:
-                await self.db_loader.cleanup_orphans(doc.source_file, [])
+            active_sources.append(doc.source_file)
+
+            state = await self.db_loader.get_document_state(doc.source_file)
+            if (
+                state is not None
+                and state.doc_hash == doc.doc_hash
+                and state.index_version == INDEX_VERSION
+            ):
+                total_skipped_docs += 1
+                logger.info(f"Skipped {doc.source_file}: unchanged document.")
                 continue
-            
+
+            chunks = self.chunker.chunk(doc)
+            valid_hashes = [c.content_hash for c in chunks]
+
             existing_hashes = await self.db_loader.get_existing_hashes(doc.source_file)
             chunks_to_process = [c for c in chunks if c.content_hash not in existing_hashes]
-            total_skipped += (len(chunks) - len(chunks_to_process))
+            total_skipped += len(chunks) - len(chunks_to_process)
 
+            embeddings: list[list[float]] = []
             if chunks_to_process:
-                logger.info(f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed chunks (skipped {len(chunks) - len(chunks_to_process)})")
-                
+                logger.info(
+                    f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed "
+                    f"chunks (skipped {len(chunks) - len(chunks_to_process)})"
+                )
                 for i in range(0, len(chunks_to_process), self.embed_batch_size):
                     batch = chunks_to_process[i:i + self.embed_batch_size]
-                    texts = [c.text for c in batch]
-                    
-                    embeddings = await self.embedder.embed(texts)
-                    await self.db_loader.upsert_chunks(batch, embeddings)
-                    total_new += len(batch)
+                    embeddings.extend(await self.embedder.embed([c.text for c in batch]))
             else:
-                logger.info(f"Skipped {doc.source_file}: no changes detected.")
+                logger.info(
+                    f"Skipped {doc.source_file}: no chunk changes, updating document state."
+                )
 
-            valid_hashes = [c.content_hash for c in chunks]
-            await self.db_loader.cleanup_orphans(doc.source_file, valid_hashes)
+            result = await self.db_loader.sync_document(
+                source_file=doc.source_file,
+                doc_hash=doc.doc_hash,
+                index_version=INDEX_VERSION,
+                valid_hashes=valid_hashes,
+                chunks_to_upsert=chunks_to_process,
+                embeddings=embeddings,
+            )
+            total_new += result.upserted
 
-        logger.info(f"Pipeline finished. Upserted: {total_new}, Skipped (unchanged): {total_skipped}")
-
-
-async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-
-    settings = get_settings()
-    ai_settings = AISettings()
-    logger.info(f"Starting kb-index pipeline. Source: {settings.kb_dir}")
-    
-    logger.info("Connecting to PostgreSQL...")
-    try:
-        pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Failed to connect to database: {e}")
-        return
-
-    tei = TeiEmbedder(
-        base_url=ai_settings.tei_embed_url,
-        timeout_s=ai_settings.request_timeout_s,
-        embedding_dim=settings.embedding_dimension,
-    )
-    try:
-        pipeline = Pipeline(
-            loader=LocalDirectoryLoader(settings.kb_dir),
-            chunker=MarkdownHeaderChunker(),
-            embedder=Embedder(tei),
-            db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
-            embed_batch_size=settings.embed_batch_size,
+        pruned = await self.db_loader.prune_missing_sources(active_sources)
+        logger.info(
+            f"Pipeline finished. Upserted: {total_new}, "
+            f"Skipped chunks: {total_skipped}, "
+            f"Skipped documents: {total_skipped_docs}, "
+            f"Pruned documents: {pruned}"
         )
-        await pipeline.run()
-    finally:
-        await pool.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())

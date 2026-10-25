@@ -61,7 +61,7 @@ def test_no_text_means_no_chunks(chunker, content):
 def test_header_hierarchy(chunker, content, expected):
     """Заголовки формируют корректную иерархию и границы чанков."""
     chunks = chunker.chunk(make_doc(content))
-    assert [(c.headers, c.text) for c in chunks] == expected
+    assert [(list(c.headers), c.text) for c in chunks] == expected
 
 
 @pytest.mark.parametrize(
@@ -81,7 +81,7 @@ def test_header_hierarchy(chunker, content, expected):
 def test_code_blocks_are_not_parsed_as_headers(chunker, content, expected):
     """Заголовки внутри блоков кода (```) игнорируются."""
     chunks = chunker.chunk(make_doc(content))
-    assert [(c.headers, c.text) for c in chunks] == expected
+    assert [(list(c.headers), c.text) for c in chunks] == expected
 
 
 @pytest.mark.parametrize(
@@ -96,7 +96,7 @@ def test_code_blocks_are_not_parsed_as_headers(chunker, content, expected):
 def test_header_syntax_edge_cases(chunker, content, expected):
     """Отсутствие пробела после #, 6-й уровень, CRLF — граничные случаи синтаксиса."""
     chunks = chunker.chunk(make_doc(content))
-    assert [(c.headers, c.text) for c in chunks] == expected
+    assert [(list(c.headers), c.text) for c in chunks] == expected
 
 
 def test_source_file_is_propagated_to_chunks(chunker):
@@ -123,3 +123,10 @@ def test_chunks_from_one_document_have_different_hashes(chunker):
 
     assert len(chunks) == 2
     assert chunks[0].content_hash != chunks[1].content_hash
+
+
+def test_content_hash_includes_source_file(chunker):
+    first = chunker.chunk(make_doc("# A\nSame text", source_file="kb/first.md"))[0]
+    second = chunker.chunk(make_doc("# A\nSame text", source_file="kb/second.md"))[0]
+
+    assert first.content_hash != second.content_hash

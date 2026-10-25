@@ -20,3 +20,7 @@ def test_load_reads_markdown_files_recursively(tmp_path):
 def test_init_raises_for_missing_directory(tmp_path):
     with pytest.raises(ValueError, match="Directory not found"):
         LocalDirectoryLoader(str(tmp_path / "does_not_exist"))
+
+
+def test_source_returns_directory_path(tmp_path):
+    assert LocalDirectoryLoader(str(tmp_path)).source() == str(tmp_path)
