@@ -81,8 +81,10 @@ class LlmClassifier:
             raise ClassificationError(str(exc)) from exc
         try:
             return Classification.model_validate_json(_strip_think(content))
-        except ValidationError as exc:
-            raise ClassificationError(f"Ответ модели не по формату: {content[:500]!r}\n{exc}") from exc
+        except ValidationError:
+            raise ClassificationError(
+                "Ответ модели не по формату: ожидалась схема Classification"
+            ) from None
 
     async def aclose(self) -> None:
         if self._owns_client:

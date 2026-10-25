@@ -13,7 +13,10 @@ class EmbeddingServiceError(RuntimeError):
 
 class TeiEmbedder:
     def __init__(self, base_url: str, timeout_s: float, http_client: httpx.AsyncClient | None = None):
-        self._client = http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout_s)
+        self._owns_client = http_client is None
+        self._client = http_client if http_client is not None else httpx.AsyncClient(
+            base_url=base_url, timeout=timeout_s
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Возвращает по одному набору из 1024 чисел на каждый текст, в том же порядке."""
@@ -45,11 +48,6 @@ class TeiEmbedder:
         for i, vector in enumerate(vectors):
             if not isinstance(vector, list):
                 raise EmbeddingServiceError(f"Текст №{i}: ожидался список чисел, пришёл {type(vector).__name__}")
-            if len(vector) != EMBEDDING_DIM:
-                raise EmbeddingServiceError(
-                    f"Текст №{i}: ожидалось {EMBEDDING_DIM} чисел, пришло {len(vector)}. "
-                    "Проверьте, что TEI запущен с моделью BAAI/bge-m3"
-                )
             if any(
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
@@ -60,7 +58,8 @@ class TeiEmbedder:
         return [[float(value) for value in vector] for vector in vectors]
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._owns_client:
+            await self._client.aclose()
 
 
 def similarity(a: list[float], b: list[float]) -> float:

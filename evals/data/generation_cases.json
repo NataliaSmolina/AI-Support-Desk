@@ -11,7 +11,8 @@
     "expected": {
       "answer_present": true,
       "source_ids": ["refund-policy"],
-      "needs_escalation": false
+      "needs_escalation": false,
+      "required_facts": ["10 рабочих дней", "исходный способ оплаты"]
     }
   },
   {
@@ -26,7 +27,8 @@
     "expected": {
       "answer_present": false,
       "source_ids": [],
-      "needs_escalation": true
+      "needs_escalation": true,
+      "required_facts": []
     }
   },
   {
@@ -45,7 +47,8 @@
     "expected": {
       "answer_present": true,
       "source_ids": ["delivery-price", "delivery-time"],
-      "needs_escalation": false
+      "needs_escalation": false,
+      "required_facts": ["350 рублей", "3-5 рабочих дней"]
     }
   }
 ]

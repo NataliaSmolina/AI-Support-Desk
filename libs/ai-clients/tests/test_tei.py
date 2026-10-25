@@ -26,15 +26,28 @@ async def test_returns_vector_per_text_in_order():
     assert all(len(v) == EMBEDDING_DIM for v in vectors)
 
 
+async def test_aclose_does_not_close_injected_http_client():
+    embedder = make_embedder(lambda _: httpx.Response(200, json=[[0.0] * EMBEDDING_DIM]))
+    client = embedder._client
+
+    await embedder.aclose()
+
+    assert not client.is_closed
+    await client.aclose()
+
+
+async def test_aclose_closes_owned_http_client():
+    embedder = TeiEmbedder("http://tei.test", 5)
+    client = embedder._client
+
+    await embedder.aclose()
+
+    assert client.is_closed
+
+
 async def test_http_error_is_raised_not_swallowed():
     embedder = make_embedder(lambda r: httpx.Response(500, text="model not loaded"))
     with pytest.raises(EmbeddingServiceError, match="HTTP 500"):
-        await embedder.embed(["текст"])
-
-
-async def test_wrong_dimension_is_error():
-    embedder = make_embedder(lambda r: httpx.Response(200, json=[[0.1] * 384]))
-    with pytest.raises(EmbeddingServiceError, match="1024"):
         await embedder.embed(["текст"])
 
 

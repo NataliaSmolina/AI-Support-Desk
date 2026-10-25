@@ -1,90 +1,83 @@
-import asyncio
 import logging
-from pathlib import Path
 
-import asyncpg
-
-from .chunker import chunk_markdown
-from .config import settings
-from .database import cleanup_orphans, get_existing_hashes, init_db, upsert_chunks
-from .embedder import embed_texts
-from .models import Document
+from .chunker import Chunker
+from .database import DBLoader
+from .embedder import Embedder
+from .loader import Loader
 
 logger = logging.getLogger(__name__)
 
-def load_documents(directory: str) -> list[Document]:
-    """Читает kb/*.md (Блок 1 схемы)"""
-    documents = []
-    path = Path(directory)
-    if not path.exists() or not path.is_dir():
-        raise ValueError(f"Directory not found: {directory}")
-    
-    for file_path in path.rglob("*.md"):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            documents.append(Document(source_file=str(file_path), content=content))
-    return documents
+INDEX_VERSION = "markdown-header-v1"
 
-async def run_pipeline():
-    """Выполняет ETL пайплайн kb-index с записью в PostgreSQL"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    
-    logger.info(f"Starting kb-index pipeline. Source: {settings.kb_dir}")
-    
-    # 1. Подключение к БД (Блок 4 схемы)
-    logger.info("Connecting to PostgreSQL...")
-    try:
-        pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
-        return
-        
-    await init_db(pool)
 
-    # 2. Чтение документов
-    docs = load_documents(settings.kb_dir)
-    logger.info(f"Loaded {len(docs)} markdown documents.")
+class Pipeline:
+    def __init__(self, loader: Loader, chunker: Chunker, embedder: Embedder, db_loader: DBLoader, embed_batch_size: int):
+        self.loader = loader
+        self.chunker = chunker
+        self.embedder = embedder
+        self.db_loader = db_loader
+        self.embed_batch_size = embed_batch_size
 
-    total_new = 0
-    total_skipped = 0
+    async def run(self):
+        """Выполняет ETL пайплайн kb-index с записью в PostgreSQL"""
+        logger.info(f"Starting kb-index pipeline. Source: {self.loader.source()}")
 
-    # 3. Обработка каждого документа
-    for doc in docs:
-        # Чанкинг по заголовкам (Блок 2 схемы)
-        chunks = chunk_markdown(doc)
-        if not chunks:
-            await cleanup_orphans(pool, doc.source_file, [])
-            continue
-        
-        # Инкрементальность: проверяем, что уже есть в БД
-        existing_hashes = await get_existing_hashes(pool, doc.source_file)
-        chunks_to_process = [c for c in chunks if c.content_hash not in existing_hashes]
-        total_skipped += (len(chunks) - len(chunks_to_process))
+        docs = self.loader.load()
+        logger.info(f"Loaded {len(docs)} markdown documents.")
 
-        if chunks_to_process:
-            logger.info(f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed chunks (skipped {len(chunks) - len(chunks_to_process)})")
-            
-            # Векторизация (Блок 3 схемы)
-            for i in range(0, len(chunks_to_process), settings.embed_batch_size):
-                batch = chunks_to_process[i:i + settings.embed_batch_size]
-                texts = [c.text for c in batch]
-                
-                embeddings = await embed_texts(texts)
-                await upsert_chunks(pool, batch, embeddings)
-                total_new += len(batch)
-        else:
-            logger.info(f"Skipped {doc.source_file}: no changes detected.")
+        total_new = 0
+        total_skipped = 0
+        total_skipped_docs = 0
+        active_sources: list[str] = []
 
-        # Очистка удаленных из файла чанков
-        valid_hashes = [c.content_hash for c in chunks]
-        await cleanup_orphans(pool, doc.source_file, valid_hashes)
+        for doc in docs:
+            active_sources.append(doc.source_file)
 
-    logger.info(f"Pipeline finished. Upserted: {total_new}, Skipped (unchanged): {total_skipped}")
-    await pool.close()
+            state = await self.db_loader.get_document_state(doc.source_file)
+            if (
+                state is not None
+                and state.doc_hash == doc.doc_hash
+                and state.index_version == INDEX_VERSION
+            ):
+                total_skipped_docs += 1
+                logger.info(f"Skipped {doc.source_file}: unchanged document.")
+                continue
 
-if __name__ == "__main__":
-    asyncio.run(run_pipeline())
+            chunks = self.chunker.chunk(doc)
+            valid_hashes = [c.content_hash for c in chunks]
+
+            existing_hashes = await self.db_loader.get_existing_hashes(doc.source_file)
+            chunks_to_process = [c for c in chunks if c.content_hash not in existing_hashes]
+            total_skipped += len(chunks) - len(chunks_to_process)
+
+            embeddings: list[list[float]] = []
+            if chunks_to_process:
+                logger.info(
+                    f"Processing {doc.source_file}: {len(chunks_to_process)} new/changed "
+                    f"chunks (skipped {len(chunks) - len(chunks_to_process)})"
+                )
+                for i in range(0, len(chunks_to_process), self.embed_batch_size):
+                    batch = chunks_to_process[i:i + self.embed_batch_size]
+                    embeddings.extend(await self.embedder.embed([c.text for c in batch]))
+            else:
+                logger.info(
+                    f"Skipped {doc.source_file}: no chunk changes, updating document state."
+                )
+
+            result = await self.db_loader.sync_document(
+                source_file=doc.source_file,
+                doc_hash=doc.doc_hash,
+                index_version=INDEX_VERSION,
+                valid_hashes=valid_hashes,
+                chunks_to_upsert=chunks_to_process,
+                embeddings=embeddings,
+            )
+            total_new += result.upserted
+
+        pruned = await self.db_loader.prune_missing_sources(active_sources)
+        logger.info(
+            f"Pipeline finished. Upserted: {total_new}, "
+            f"Skipped chunks: {total_skipped}, "
+            f"Skipped documents: {total_skipped_docs}, "
+            f"Pruned documents: {pruned}"
+        )
