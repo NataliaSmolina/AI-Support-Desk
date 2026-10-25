@@ -43,7 +43,23 @@ async def test_unknown_source_rejected():
         await generator(handler).generate("Вопрос", [{"id": "real", "text": "Текст"}])
 
 
+@pytest.mark.parametrize(
+    ("source_ids", "needs_escalation"),
+    [([], False), (["real"], True)],
+)
+async def test_answer_with_text_requires_sources_without_escalation(source_ids, needs_escalation):
+    def handler(_):
+        return httpx.Response(200, json={"message": {"content": json.dumps({
+            "answer": "Ответ", "source_ids": source_ids,
+            "needs_escalation": needs_escalation})}})
+
+    with pytest.raises(GenerationError, match="должен содержать источники"):
+        await generator(handler).generate("Вопрос", [{"id": "real", "text": "Текст"}])
+
+
 async def test_invalid_json_rejected():
-    with pytest.raises(GenerationError, match="не по формату"):
-        await generator(lambda _: httpx.Response(200, json={"message": {"content": "oops"}})).generate(
+    raw_answer = "oops: private question text"
+    with pytest.raises(GenerationError, match="не по формату") as exc_info:
+        await generator(lambda _: httpx.Response(200, json={"message": {"content": raw_answer}})).generate(
             "Вопрос", [{"id": "real", "text": "Текст"}])
+    assert raw_answer not in str(exc_info.value)

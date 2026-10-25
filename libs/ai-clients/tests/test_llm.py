@@ -67,6 +67,13 @@ async def test_unknown_category_is_error():
         await make_classifier(lambda r: httpx.Response(200, json=completion(json.dumps(bad)))).classify("вопрос")
 
 
+async def test_invalid_response_is_not_included_in_format_error():
+    raw_answer = "not json: private question text"
+    with pytest.raises(ClassificationError, match="не по формату") as exc_info:
+        await make_classifier(lambda r: httpx.Response(200, json=completion(raw_answer))).classify("вопрос")
+    assert raw_answer not in str(exc_info.value)
+
+
 async def test_empty_answer_is_error():
     with pytest.raises(ClassificationError, match="пустой"):
         await make_classifier(lambda r: httpx.Response(200, json=completion(""))).classify("вопрос")
