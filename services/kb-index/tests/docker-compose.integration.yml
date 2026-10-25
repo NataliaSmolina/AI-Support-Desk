@@ -23,6 +23,8 @@ services:
       POSTGRES_DB: kb_index_it
     ports:
       - "127.0.0.1:5435:5432"
+    volumes:
+      - ../../../infra/postgres/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kb_index_it -d kb_index_it"]
       interval: 3s
