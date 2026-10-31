@@ -6,7 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
-from support_bot import texts
+from support_bot import db, texts
 from support_bot.config import BotSettings
 from support_bot.handlers import client, operator
 
@@ -23,15 +23,25 @@ async def main() -> None:
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     settings = BotSettings()
 
-    # settings=... — всё, что передано сюда, aiogram подставляет в хендлеры по имени аргумента
-    dispatcher = Dispatcher(settings=settings)
+    pool = None
+    if settings.database_url is None:
+        logging.warning("DATABASE_URL не задан – вопросы клиентов не сохраняются")
+    else:
+        pool = await db.open_pool(settings.database_url.get_secret_value())
+
+    dispatcher = Dispatcher(settings=settings, pool=pool)
     dispatcher.include_router(client.router)
     dispatcher.include_router(operator.router)
 
-    # async with сам закроет соединение с Telegram при остановке
-    async with Bot(token=settings.bot_token.get_secret_value()) as bot:
-        await bot.set_my_commands(COMMANDS)
-        await dispatcher.start_polling(bot)
+    try:
+        # async with сам закроет соединение с Telegram при остановке
+        async with Bot(token=settings.bot_token.get_secret_value()) as bot:
+            await bot.set_my_commands(COMMANDS)
+            await dispatcher.start_polling(bot)
+    finally:
+        # аккуратное закрытие с бд, в тч ctrl + c
+        if pool is not None:
+            await pool.close()
 
 
 if __name__ == "__main__":

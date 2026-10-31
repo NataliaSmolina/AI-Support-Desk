@@ -2,11 +2,13 @@
 
 import logging
 
+import psycopg
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, Update
+from psycopg_pool import AsyncConnectionPool
 
-from support_bot import texts
+from support_bot import db, texts
 from support_bot.config import BotSettings
 from support_bot.keyboards import draft_keyboard
 
@@ -32,10 +34,29 @@ async def help_command(message: Message) -> None:
 # F.text – обычный текст, F.caption – подпись к фото или файлу. «|» значит «или».
 # Команды /start и /help тоже текст, но их ловят хендлеры выше: проверка идёт сверху вниз.
 @router.message(F.text | F.caption)
-async def question(message: Message, bot: Bot, settings: BotSettings) -> None:
-    # bot и settings aiogram подставит сам — см. Dispatcher(settings=...) в main.py
-    # У обычного сообщения текст в text, у фото с подписью – в caption
+async def question(
+    message: Message,
+    bot: Bot,
+    settings: BotSettings,
+    pool: AsyncConnectionPool | None = None,
+    event_update: Update | None = None,
+) -> None:
+    # event_update – всё событие от Telegram, из него нужен номер update_id
+    # У обычного сообщения text, у текста с фото caption
     text = message.text or message.caption
+
+    # Сначала сохраняем, потом говорим «получен»
+    if pool is not None and event_update is not None:
+        try:
+            ticket_id = await db.save_question(pool, event_update.update_id, message.chat.id, text)
+        except psycopg.Error:
+            logger.exception("Не удалось сохранить вопрос от chat_id=%s", message.chat.id)
+            await message.answer(texts.SAVE_FAILED)
+            return
+        # Повтор соо
+        if ticket_id is None:
+            return
+        logger.info("Тикет %s от chat_id=%s", ticket_id, message.chat.id)
 
     await message.answer(texts.ACCEPTED)
     if message.caption:

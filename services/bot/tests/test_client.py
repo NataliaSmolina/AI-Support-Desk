@@ -1,9 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import psycopg
 from aiogram import F
 
-from support_bot import texts
+from support_bot import db, texts
 from support_bot.handlers.client import PRIVATE_CHAT, help_command, not_text, question, start
 
 
@@ -50,6 +51,19 @@ async def test_question_sends_card_to_operators():
     assert sent["message_thread_id"] == 5
     assert "Где мой заказ?" in sent["text"]
     assert sent["reply_markup"] is not None
+
+
+async def test_question_db_error_tells_client(monkeypatch):
+    # Подменяем запись в базу: она падает, как при недоступном сервере
+    monkeypatch.setattr(db, "save_question", AsyncMock(side_effect=psycopg.OperationalError))
+    message = AsyncMock()
+    message.text = "Где мой заказ?"
+    settings = SimpleNamespace(operator_chat_id=None)
+
+    await question(message, AsyncMock(), settings, pool=object(), event_update=SimpleNamespace(update_id=1))
+
+    # Клиенту только сообщение об ошибке, без «Вопрос получен»
+    message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
 
 
 async def test_not_text_asks_for_text():
