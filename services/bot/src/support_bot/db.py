@@ -1,5 +1,7 @@
 """Запись вопросов клиентов в PostgreSQL. Worker забирает их оттуда."""
 
+from datetime import datetime
+
 from psycopg_pool import AsyncConnectionPool
 
 
@@ -32,3 +34,13 @@ async def save_question(pool: AsyncConnectionPool, update_id: int, chat_id: int,
             (ticket_id, text),
         )
         return ticket_id
+
+
+async def client_tickets(pool: AsyncConnectionPool, chat_id: int, limit: int = 5) -> list[tuple[int, str, datetime]]:
+    """Последние обращения клиента: номер, статус и время создания, новые сверху."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, status, created_at FROM tickets WHERE chat_id = %s ORDER BY id DESC LIMIT %s",
+            (chat_id, limit),
+        )
+        return await cur.fetchall()

@@ -38,7 +38,8 @@ async def pool():
     if url is None:
         pytest.skip("DATABASE_URL не задан")
 
-    async with await psycopg.AsyncConnection.connect(url.get_secret_value()) as conn:
+    # connect_timeout: если база недоступна (например, выключен Tailscale), ошибка через 5 секунд, а не зависание
+    async with await psycopg.AsyncConnection.connect(url.get_secret_value(), connect_timeout=5) as conn:
         # force_rollback: в конце всё отменяется, даже если тест прошел
         async with conn.transaction(force_rollback=True):
             yield RollbackPool(conn)
@@ -54,6 +55,16 @@ async def test_question_creates_new_ticket_with_message(pool):
     )
     # Именно такой тикет ищет worker: статус new и сообщение от client
     assert await cur.fetchone() == ("new", 111, "client", "Где мой заказ?")
+
+
+async def test_client_sees_own_ticket_first(pool):
+    ticket_id = await db.save_question(pool, UPDATE_ID, 111, "Где мой заказ?")
+
+    tickets = await db.client_tickets(pool, 111)
+
+    # Только что созданный тикет – первый в списке
+    first_id, status, _created_at = tickets[0]
+    assert (first_id, status) == (ticket_id, "new")
 
 
 async def test_repeated_update_is_skipped(pool):

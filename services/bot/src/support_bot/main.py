@@ -14,6 +14,7 @@ from support_bot.handlers import client, operator
 COMMANDS = [
     BotCommand(command="start", description=texts.COMMAND_START),
     BotCommand(command="help", description=texts.COMMAND_HELP),
+    BotCommand(command="status", description=texts.COMMAND_STATUS),
 ]
 
 

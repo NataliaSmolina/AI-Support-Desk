@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -5,7 +6,7 @@ import psycopg
 from aiogram import F
 
 from support_bot import db, texts
-from support_bot.handlers.client import PRIVATE_CHAT, help_command, not_text, question, start
+from support_bot.handlers.client import PRIVATE_CHAT, help_command, not_text, question, start, status_command
 
 
 async def test_start_answers_with_greeting():
@@ -64,6 +65,25 @@ async def test_question_db_error_tells_client(monkeypatch):
 
     # Клиенту только сообщение об ошибке, без «Вопрос получен»
     message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
+
+
+async def test_status_without_db():
+    message = AsyncMock()
+
+    await status_command(message, pool=None)
+
+    message.answer.assert_awaited_once_with(texts.STATUS_UNAVAILABLE)
+
+
+def test_status_list_shows_number_time_and_status():
+    # 10:31 по UTC – это 13:31 по Москве
+    created_at = datetime(2026, 10, 31, 10, 31, tzinfo=UTC)
+
+    result = texts.status_list([(15, "processing", created_at)]).as_kwargs()
+
+    assert "Обращение #15\n31.10.26, 13:31\nСтатус: В обработке" in result["text"]
+    # Номер выделен жирным
+    assert result["entities"][0].type == "bold"
 
 
 async def test_not_text_asks_for_text():
