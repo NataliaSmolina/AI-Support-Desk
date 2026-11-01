@@ -11,12 +11,13 @@ class BotSettings(BaseSettings):
     # SecretStr прячет токен при печати: вместо него выводится '**********'
     bot_token: SecretStr = Field(min_length=1)
 
-    # Группа операторов, куда бот шлёт карточки. Узнать номера — команда /chat_id в группе.
-    # None — группа не задана, карточки не отправляются.
+    # Группа операторов, куда бот шлёт карточки.
     operator_chat_id: int | None = None
-    # Тема (топик) в группе. None — общая тема
+    # Для бота в группе
     operator_thread_id: int | None = None
 
-    # Telegram ID тех, кто может нажимать кнопки карточки. В .env – списком: OPERATOR_IDS=[123, 456]
-    # Пустой список – не может никто. Свой ID бот пишет в лог на /start
+    # Операторы бота по id
     operator_ids: list[int] = []
+
+    # Адрес базы
+    database_url: SecretStr | None = None
