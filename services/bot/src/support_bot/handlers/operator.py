@@ -2,12 +2,14 @@
 
 import logging
 
+import psycopg
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from psycopg_pool import AsyncConnectionPool
 
-from support_bot import texts
+from support_bot import db, texts
 from support_bot.config import BotSettings
 from support_bot.keyboards import Action, DraftAction
 
@@ -30,7 +32,13 @@ def not_operator(callback: CallbackQuery, settings: BotSettings) -> bool:
     return callback.from_user.id not in settings.operator_ids
 
 
-# Стоит первым: хендлеры проверяются сверху вниз, поэтому нажатие не-оператора
+# Старые кнопки содержат chat_id, его нельзя принимать за ticket_id.
+@router.callback_query(F.data.startswith("draft:"))
+async def outdated_card(callback: CallbackQuery) -> None:
+    await callback.answer(texts.CARD_OUTDATED, show_alert=True)
+
+
+# Перед рабочими кнопками: хендлеры проверяются сверху вниз, поэтому нажатие не-оператора
 # до «Отправить» и «Исправить» не доходит. Проверка написана один раз для всех кнопок.
 @router.callback_query(DraftAction.filter(), not_operator)
 async def deny_not_operator(callback: CallbackQuery, settings: BotSettings) -> None:
@@ -42,16 +50,34 @@ async def deny_not_operator(callback: CallbackQuery, settings: BotSettings) -> N
 # DraftAction.filter(...) ловит только кнопки карточки, и только с действием SEND.
 # Распакованные данные кнопки aiogram передаст в аргумент callback_data.
 @router.callback_query(DraftAction.filter(F.action == Action.SEND))
-async def send_draft(callback: CallbackQuery, callback_data: DraftAction, bot: Bot) -> None:
+async def send_draft(
+    callback: CallbackQuery,
+    callback_data: DraftAction,
+    bot: Bot,
+    pool: AsyncConnectionPool | None = None,
+) -> None:
     card = callback.message
     # Telegram не дает менять сообщения старше 48 часов – тогда вместо Message приходит заглушка
     if not isinstance(card, Message):
         await callback.answer(texts.CARD_TOO_OLD, show_alert=True)
         return
 
+    if pool is None:
+        await callback.answer(texts.TICKET_UNAVAILABLE, show_alert=True)
+        return
+    try:
+        client_id = await db.client_chat_id(pool, callback_data.ticket_id)
+    except psycopg.Error:
+        logger.exception("Не удалось получить чат тикета %s", callback_data.ticket_id)
+        await callback.answer(texts.TICKET_UNAVAILABLE, show_alert=True)
+        return
+    if client_id is None:
+        await callback.answer(texts.TICKET_NOT_FOUND, show_alert=True)
+        return
+
     # Пока черновик всегда один. Позже здесь будет «взять черновик заявки из базы»
     try:
-        await bot.send_message(chat_id=callback_data.chat_id, text=texts.FAKE_DRAFT)
+        await bot.send_message(chat_id=client_id, text=texts.FAKE_DRAFT)
     except TelegramForbiddenError:
         await callback.answer(texts.CLIENT_BLOCKED, show_alert=True)
         return

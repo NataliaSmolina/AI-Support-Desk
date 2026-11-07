@@ -44,3 +44,11 @@ async def client_tickets(pool: AsyncConnectionPool, chat_id: int, limit: int = 5
             (chat_id, limit),
         )
         return await cur.fetchall()
+
+
+async def client_chat_id(pool: AsyncConnectionPool, ticket_id: int) -> int | None:
+    """Чат клиента по номеру тикета. None – тикет не найден."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT chat_id FROM tickets WHERE id = %s", (ticket_id,))
+        row = await cur.fetchone()
+        return row[0] if row is not None else None

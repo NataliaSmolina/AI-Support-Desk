@@ -15,26 +15,26 @@ class Action(StrEnum):
     EDIT = "edit"
 
 
-class DraftAction(CallbackData, prefix="draft"):
+class DraftAction(CallbackData, prefix="ticket_draft"):
     """Данные, зашитые в кнопку карточки.
 
-    Telegram хранит их как строку, например 'draft:send:123456'.
+    Telegram хранит их как строку, например 'ticket_draft:send:15'.
     CallbackData сам превращает объект в строку (pack) и обратно (unpack).
     """
 
     action: Action
-    chat_id: int  # куда отправить ответ — личка клиента
+    ticket_id: int
 
 
-def draft_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+def draft_keyboard(ticket_id: int) -> InlineKeyboardMarkup:
     """Кнопки «Отправить» и «Исправить» под карточкой оператора."""
     send = InlineKeyboardButton(
         text=texts.BUTTON_SEND,
-        callback_data=DraftAction(action=Action.SEND, chat_id=chat_id).pack(),
+        callback_data=DraftAction(action=Action.SEND, ticket_id=ticket_id).pack(),
     )
     edit = InlineKeyboardButton(
         text=texts.BUTTON_EDIT,
-        callback_data=DraftAction(action=Action.EDIT, chat_id=chat_id).pack(),
+        callback_data=DraftAction(action=Action.EDIT, ticket_id=ticket_id).pack(),
     )
     # Список списков: каждый внутренний список — один ряд кнопок
     return InlineKeyboardMarkup(inline_keyboard=[[send, edit]])
