@@ -9,6 +9,7 @@ import uuid
 import psycopg
 
 from ai_clients.config import AISettings
+from ai_clients.readiness import check_llm_ready
 from ai_clients.llm import LlmClassifier
 
 from .config import Settings
@@ -103,11 +104,12 @@ async def run(settings: Settings) -> None:
     worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
     ai = AISettings()
     classifier = LlmClassifier(
-        base_url=ai.llm_base_url, model=ai.llm_model, timeout_s=ai.request_timeout_s,
+        base_url=ai.llm_base_url, model=ai.llm_model, timeout_s=ai.request_timeout_s, provider=ai.llm_provider,
     )
     log.info("worker %s запущен", worker_id)
     next_recover = 0.0
     try:
+        await check_llm_ready(ai)
         with psycopg.connect(settings.dsn) as conn:
             while True:
                 if time.monotonic() >= next_recover:

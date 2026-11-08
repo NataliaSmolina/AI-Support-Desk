@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from ai_clients.config import AISettings
+from ai_clients.readiness import LLMReadinessError, check_llm_ready
 from ai_clients.generator import GenerationError, LlmAnswerGenerator
 from ai_clients.llm import ClassificationError, LlmClassifier
 
@@ -35,8 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         choices=("ollama", "openai"),
-        default="ollama",
-        help="LLM API transport (default: ollama).",
+        default=None,
+        help="LLM API transport (default: LLM_PROVIDER from settings).",
     )
     parser.add_argument(
         "--output",
@@ -98,6 +99,12 @@ def markdown_elapsed(value: float | None) -> str:
 async def main() -> int:
     args = parse_args()
     settings = AISettings()
+    args.provider = args.provider or settings.llm_provider
+    try:
+        await check_llm_ready(settings.model_copy(update={"llm_provider": args.provider}))
+    except LLMReadinessError as exc:
+        print(f"LLM не готов: {exc}", file=sys.stderr)
+        return 1
     classification_cases = json.loads(CLASSIFICATION_CASES.read_text(encoding="utf-8"))
     generation_cases = json.loads(GENERATION_CASES.read_text(encoding="utf-8"))
     server_version, server_version_error = await read_server_version(

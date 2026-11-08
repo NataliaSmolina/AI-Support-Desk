@@ -20,6 +20,7 @@ async def main():
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         timeout_s=settings.request_timeout_s,
+        provider=settings.llm_provider,
     )
 
     try:
