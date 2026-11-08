@@ -87,3 +87,24 @@ async def test_server_error_is_raised():
 async def test_empty_question_rejected():
     with pytest.raises(ValueError):
         await make_classifier(lambda r: httpx.Response(200, json=completion("{}"))).classify("   ")
+
+
+async def test_custom_prompt_keeps_schema_and_user_question():
+    from ai_clients.ollama import LLMClient
+
+    def handler(request):
+        payload = json.loads(request.content)
+        assert payload['messages'][0] == {'role': 'system', 'content': 'comparison prompt'}
+        assert payload['messages'][1]['content'] == 'Вопрос клиента: тестовый вопрос'
+        assert payload['response_format']['json_schema']['name'] == 'classification'
+        return httpx.Response(200, json=completion(json.dumps(VALID)))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = LLMClient('http://llm.test/v1', 'test', 5, http, provider='openai')
+        classifier = LlmClassifier('http://llm.test/v1', 'test', 5, llm_client=client,
+                                   system_prompt='comparison prompt')
+        try:
+            assert (await classifier.classify('тестовый вопрос')).category is Category.BILLING
+        finally:
+            await classifier.aclose()
+            await client.aclose()

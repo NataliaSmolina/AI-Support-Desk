@@ -1,0 +1,202 @@
+[
+  {
+    "id": "calm_fraud",
+    "question": "Обнаружил оплату, которую я не совершал. Проверьте, пожалуйста.",
+    "expected": {
+      "category": "billing",
+      "priority": "critical",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "angry_delivery",
+    "question": "ГДЕ МОЯ ПОСЫЛКА?! СНОВА ЗАДЕРЖКА!",
+    "expected": {
+      "category": "delivery",
+      "priority": "normal",
+      "sentiment": "negative",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "general_payment",
+    "question": "Какие банковские карты принимаются?",
+    "expected": {
+      "category": "billing",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "specific_refund",
+    "question": "Проверьте возврат по заказу 731, деньги пока не пришли.",
+    "expected": {
+      "category": "billing",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "human_account",
+    "question": "Не получается сменить пароль. Соедините с сотрудником поддержки.",
+    "expected": {
+      "category": "account",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": true
+    }
+  },
+  {
+    "id": "no_human",
+    "question": "Оператор не нужен, подскажите стоимость доставки.",
+    "expected": {
+      "category": "delivery",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "past_human",
+    "question": "Вчера общался с оператором. Где посмотреть статус заказа 98?",
+    "expected": {
+      "category": "delivery",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "human_hours",
+    "question": "В какое время можно связаться с оператором?",
+    "expected": {
+      "category": "other",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "changed_mind",
+    "question": "Позовите оператора. Хотя нет, человек не нужен: как зарегистрироваться?",
+    "expected": {
+      "category": "account",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "human_now",
+    "question": "Сначала хотел разобраться сам, но теперь соедините с менеджером.",
+    "expected": {
+      "category": "other",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": true
+    }
+  },
+  {
+    "id": "hypothetical",
+    "question": "Что делать, если с карты когда-нибудь спишут оплату дважды?",
+    "expected": {
+      "category": "billing",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "urgent_problem",
+    "question": "Срочно помогите: не удаётся оформить доставку моего заказа.",
+    "expected": {
+      "category": "delivery",
+      "priority": "critical",
+      "sentiment": "negative",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "urgent_negated",
+    "question": "Не срочно: не могу войти в профиль.",
+    "expected": {
+      "category": "account",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "mixed_critical",
+    "question": "Где моя посылка? Ещё заметил, что незнакомец сменил телефон в моём профиле.",
+    "expected": {
+      "category": "account",
+      "priority": "critical",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "mixed_request",
+    "question": "Хочу узнать способы оплаты и сроки доставки.",
+    "expected": {
+      "category": "billing",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "human_billing",
+    "question": "Прошу оператора проверить чек по заказу 55.",
+    "expected": {
+      "category": "billing",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": true
+    }
+  },
+  {
+    "id": "security_general",
+    "question": "Как защитить профиль от чужого доступа?",
+    "expected": {
+      "category": "account",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "normal_password",
+    "question": "Забыл пароль, как восстановить доступ?",
+    "expected": {
+      "category": "account",
+      "priority": "normal",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "urgent_general",
+    "question": "Есть ли услуга срочной доставки?",
+    "expected": {
+      "category": "delivery",
+      "priority": "low",
+      "sentiment": "calm",
+      "wants_human": false
+    }
+  },
+  {
+    "id": "angry_no_human",
+    "question": "НЕ НАДО МНЕ ОПЕРАТОРА! Почему опять задержали возврат?",
+    "expected": {
+      "category": "billing",
+      "priority": "normal",
+      "sentiment": "negative",
+      "wants_human": false
+    }
+  }
+]
