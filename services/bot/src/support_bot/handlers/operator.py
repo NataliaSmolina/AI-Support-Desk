@@ -4,7 +4,7 @@ import logging
 
 import psycopg
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from psycopg_pool import AsyncConnectionPool
@@ -76,16 +76,38 @@ async def send_draft(
         return
 
     # Пока черновик всегда один. Позже здесь будет «взять черновик заявки из базы»
+    reply_text = texts.FAKE_DRAFT
     try:
-        await bot.send_message(chat_id=client_id, text=texts.FAKE_DRAFT)
+        await bot.send_message(chat_id=client_id, text=reply_text)
     except TelegramForbiddenError:
         await callback.answer(texts.CLIENT_BLOCKED, show_alert=True)
         return
+    except TelegramAPIError:
+        logger.exception("Telegram не подтвердил отправку по тикету %s", callback_data.ticket_id)
+        await callback.answer(texts.REPLY_SEND_UNCONFIRMED, show_alert=True)
+        return
 
-    # edit_text без reply_markup убирает кнопки – второй раз отправить нельзя
-    await card.edit_text(texts.card_sent(card.text, callback.from_user.full_name))
+    # Пишем историю после успешной отправки, чтобы не записать недоставленный ответ.
+    warning = None
+    try:
+        await db.save_operator_reply(pool, callback_data.ticket_id, reply_text)
+    except psycopg.Error:
+        logger.exception("Ответ доставлен, но не сохранен для тикета %s", callback_data.ticket_id)
+        warning = texts.REPLY_SAVE_FAILED
+
+    sent_card = texts.card_sent(card.text, callback.from_user.full_name, history_saved=warning is None)
+    # Убираем кнопки и при ошибке сохранения: клиент уже получил ответ.
+    try:
+        await card.edit_text(sent_card)
+    except TelegramAPIError:
+        logger.exception("Не удалось обновить карточку тикета %s после отправки", callback_data.ticket_id)
+        warning = f"{warning}\n{texts.CARD_UPDATE_FAILED}" if warning else texts.CARD_UPDATE_FAILED
+
     # Ответ на нажатие обязателен, иначе у оператора крутятся «часики»
-    await callback.answer()
+    if warning is not None:
+        await callback.answer(warning, show_alert=True)
+    else:
+        await callback.answer()
 
 
 @router.callback_query(DraftAction.filter(F.action == Action.EDIT))
