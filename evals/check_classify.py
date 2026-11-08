@@ -25,7 +25,7 @@ FIELDS = ("category", "priority", "sentiment", "wants_human")
 async def main() -> int:
     settings = AISettings()
     cases = json.loads(QUESTIONS.read_text(encoding="utf-8"))
-    classifier = LlmClassifier(settings.llm_base_url, settings.llm_model, settings.request_timeout_s)
+    classifier = LlmClassifier(settings.llm_base_url, settings.llm_model, settings.request_timeout_s, provider=settings.llm_provider)
 
     rows, times, errors = [], [], 0
     correct = {f: 0 for f in FIELDS}

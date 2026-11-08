@@ -12,10 +12,9 @@ class LLMRequestError(RuntimeError):
 class LLMClient:
     def __init__(self, base_url: str, model: str, timeout_s: float,
                  http_client: httpx.AsyncClient | None = None,
-                 provider: str | None = None):
+                 provider: str = "ollama"):
         self.model = model
-        # Обратная совместимость с существующей настройкой проекта.
-        self.provider = provider or ("ollama" if "11500" in base_url else "openai")
+        self.provider = provider
         if self.provider not in {"ollama", "openai"}:
             raise ValueError("provider должен быть 'ollama' или 'openai'")
         self._owns_http_client = self.provider == "ollama" and http_client is None

@@ -1,3 +1,6 @@
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +14,8 @@ class AISettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     tei_embed_url: str = "http://127.0.0.1:8081"
+    llm_provider: Literal["ollama", "openai"] = "ollama"
+    llm_health_timeout_s: float = Field(default=5.0, gt=0)
     llm_base_url: str = "http://127.0.0.1:11500/v1"
     llm_model: str = "qwen3:8b"
     request_timeout_s: float = 180.0

@@ -27,7 +27,7 @@ def completion(content: str | None) -> dict:
 
 def make_classifier(handler) -> LlmClassifier:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return LlmClassifier("http://llm.test/v1", "test-model", 5, http_client=client)
+    return LlmClassifier("http://llm.test/v1", "test-model", 5, http_client=client, provider="openai")
 
 
 VALID = {"category": "billing", "priority": "critical", "sentiment": "negative", "wants_human": False}

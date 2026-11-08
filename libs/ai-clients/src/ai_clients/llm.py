@@ -63,7 +63,7 @@ class ClassificationError(RuntimeError):
 class LlmClassifier:
     def __init__(self, base_url: str, model: str, timeout_s: float,
                  http_client: httpx.AsyncClient | None = None, *,
-                 provider: str | None = None, llm_client: LLMClient | None = None):
+                 provider: str = "ollama", llm_client: LLMClient | None = None):
         self._owns_client = llm_client is None
         self._client = llm_client or LLMClient(base_url, model, timeout_s, http_client, provider)
 
