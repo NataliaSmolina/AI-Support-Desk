@@ -87,7 +87,8 @@ async def question(
         chat_id=settings.operator_chat_id,
         message_thread_id=settings.operator_thread_id,
         text=texts.card(text, texts.FAKE_DRAFT, ticket_id),
-        reply_markup=draft_keyboard(message.chat.id),
+        # Без базы тикета нет, поэтому кнопки не добавляем.
+        reply_markup=draft_keyboard(ticket_id) if ticket_id is not None else None,
     )
 
 

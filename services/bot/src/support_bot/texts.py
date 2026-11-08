@@ -48,14 +48,24 @@ def card(question: str, draft: str, ticket_id: int | None = None) -> str:
     return f"🎫 Тикет #{ticket_id}\n\n{text}"
 
 
-def card_sent(card_text: str, operator: str) -> str:
-    """Карточка после отправки: прежний текст и пометка, кто отправил."""
-    return f"{card_text}\n\n✅ Отправлено: {operator}"
+def card_sent(card_text: str, operator: str, *, history_saved: bool) -> str:
+    """Добавляет имя оператора и результат сохранения ответа."""
+    if history_saved:
+        status = "✅ Отправлено и сохранено"
+    else:
+        status = "⚠️ Отправлено, история не сохранена"
+    return f"{card_text}\n\n{status}: {operator}"
 
 
 # Всплывающие окна у оператора после нажатия кнопки
 CLIENT_BLOCKED = "Клиент заблокировал бота, ответ не доставлен."
+REPLY_SEND_UNCONFIRMED = "Отправка не подтверждена. Проверьте доставку."
 CARD_TOO_OLD = "Карточка слишком старая, бот не может ее изменить."
+CARD_OUTDATED = "Карточка устарела: ее кнопки больше не поддерживаются."
+TICKET_UNAVAILABLE = "Не удалось получить обращение. Попробуйте позже."
+TICKET_NOT_FOUND = "Обращение не найдено. Ответ не отправлен."
+REPLY_SAVE_FAILED = "Ответ доставлен, но не сохранен в истории. Не отправляйте его повторно."
+CARD_UPDATE_FAILED = "Карточку не удалось обновить. Ответ уже доставлен, не отправляйте его повторно."
 EDIT_NOT_READY = "Исправление черновика скоро будет."
 NOT_OPERATOR = "Отвечать на заявки могут только операторы."
 
