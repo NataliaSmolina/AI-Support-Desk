@@ -68,6 +68,29 @@ REPLY_SAVE_FAILED = "Ответ доставлен, но не сохранен �
 CARD_UPDATE_FAILED = "Карточку не удалось обновить. Ответ уже доставлен, не отправляйте его повторно."
 EDIT_NOT_READY = "Исправление черновика скоро будет."
 NOT_OPERATOR = "Отвечать на заявки могут только операторы."
+TICKET_USAGE = "Укажите номер обращения: /ticket №"
+
+
+def ticket_details(ticket: dict, messages: list[dict]) -> str:
+    """Карточка для команды /ticket, сообщения могут быть сокращены."""
+    human = ticket["wants_human"]
+    human_text = "Не определено" if human is None else ("Да" if human else "Нет")
+    lines = [
+        f"Обращение #{ticket['id']}",
+        f"Статус: {ticket['status']}",
+        f"Категория: {ticket['category'] or 'Не определена'}",
+        f"Приоритет: {ticket['priority'] or 'Не определен'}",
+        f"Настроение: {ticket['sentiment'] or 'Не определено'}",
+        f"Просьба об операторе: {human_text}",
+        "\nПоследние сообщения (до 300 символов):",
+    ]
+    authors = {"client": "Клиент", "operator": "Оператор", "bot": "Бот"}
+    for message in messages:
+        author = authors.get(message["author"], message["author"])
+        lines.append(f"{author}: {message['text']}")
+    if not messages:
+        lines.append("Сообщений пока нет")
+    return "\n".join(lines)
 
 
 # --- Команда /status ---
@@ -94,8 +117,8 @@ def status_list(tickets: list[tuple[int, str, datetime]]) -> Text:
     parts = ["Ваши последние обращения:"]
     for ticket_id, status, created_at in tickets:
         local = created_at.astimezone(TIMEZONE)
-        # Незнакомый статус показываем как есть, а не падаем
-        name = STATUS_NAMES.get(status, status)
+        # Внутреннее значение неизвестного статуса клиенту не показываем
+        name = STATUS_NAMES.get(status, "Уточняется")
         # Bold – жирный шрифт только для номера, остальное обычным текстом
         parts += ["\n\n", Bold(f"Обращение #{ticket_id}"), f"\n{local:%d.%m.%y, %H:%M}\nСтатус: {name}"]
     return Text(*parts)

@@ -61,19 +61,21 @@ async def question(
     # У обычного сообщения text, у текста с фото caption
     text = message.text or message.caption
 
-    # Сначала сохраняем, потом говорим «получен». Без базы номера нет – остается None
-    ticket_id = None
-    if pool is not None and event_update is not None:
-        try:
-            ticket_id = await db.save_question(pool, event_update.update_id, message.chat.id, text)
-        except psycopg.Error:
-            logger.exception("Не удалось сохранить вопрос от chat_id=%s", message.chat.id)
-            await message.answer(texts.SAVE_FAILED)
-            return
-        # Повтор соо
-        if ticket_id is None:
-            return
-        logger.info("Тикет %s от chat_id=%s", ticket_id, message.chat.id)
+    # Без базы или номера события нельзя надежно сохранить обращение.
+    if pool is None or event_update is None:
+        logger.warning("Не удалось принять вопрос: нет базы или события Telegram")
+        await message.answer(texts.SAVE_FAILED)
+        return
+    try:
+        ticket_id = await db.save_question(pool, event_update.update_id, message.chat.id, text)
+    except psycopg.Error:
+        logger.exception("Не удалось сохранить вопрос от chat_id=%s", message.chat.id)
+        await message.answer(texts.SAVE_FAILED)
+        return
+    # Повторное событие уже обработано.
+    if ticket_id is None:
+        return
+    logger.info("Тикет %s от chat_id=%s", ticket_id, message.chat.id)
 
     await message.answer(texts.accepted(ticket_id))
     if message.caption:
@@ -87,8 +89,7 @@ async def question(
         chat_id=settings.operator_chat_id,
         message_thread_id=settings.operator_thread_id,
         text=texts.card(text, texts.FAKE_DRAFT, ticket_id),
-        # Без базы тикета нет, поэтому кнопки не добавляем.
-        reply_markup=draft_keyboard(ticket_id) if ticket_id is not None else None,
+        reply_markup=draft_keyboard(ticket_id),
     )
 
 
