@@ -1,0 +1,18 @@
+# Изолированная БД для RAG-проверки: не использует том и порт основной базы.
+name: support-desk-rag-eval
+services:
+  rag-postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: rag_eval
+      POSTGRES_PASSWORD: rag_eval
+      POSTGRES_DB: rag_eval
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - ../infra/postgres/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_eval -d rag_eval"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

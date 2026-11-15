@@ -1,0 +1,169 @@
+{
+  "date_utc": "2026-11-15T19:30:08.037527+00:00",
+  "machine": "macOS-15.7.4-arm64-arm-64bit",
+  "llm_model": "qwen3:8b",
+  "llm_provider": "ollama",
+  "tei_url": "http://127.0.0.1:8081",
+  "embedding_model": "BAAI/bge-m3 (ожидаемая модель)",
+  "top_k": 2,
+  "max_distance": null,
+  "request_timeout_s": 180.0,
+  "demo": true,
+  "complete": true,
+  "rows": [
+    {
+      "name": "Ответ из одной статьи",
+      "question": "Когда мне вернут деньги за отменённый заказ и куда они придут?",
+      "expected": {
+        "answer_present": true,
+        "source_files": [
+          "refunds.md"
+        ],
+        "needs_escalation": false,
+        "required_facts": [
+          "10 рабочих дней",
+          "исходный способ оплаты"
+        ]
+      },
+      "result": {
+        "answer": "Деньги за отменённый заказ возвращаются в течение 10 рабочих дней на исходный способ оплаты.",
+        "source_ids": [
+          "f4e2cbe4de40684c1b1962199a28b17340fe569a51fdea49d9e62693053b33dd"
+        ],
+        "needs_escalation": false,
+        "reason": null,
+        "retrieved_chunks": [
+          {
+            "id": "f4e2cbe4de40684c1b1962199a28b17340fe569a51fdea49d9e62693053b33dd",
+            "text": "После отмены заказа деньги возвращаются в течение 10 рабочих дней на исходный способ оплаты.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/refunds.md",
+            "headers": [
+              "Возврат после отмены заказа"
+            ],
+            "distance": 0.24013057468765087
+          },
+          {
+            "id": "7d9b43cde4dfd79fe1b4dc169ee833e2d6c33119674f6b498f94b5ebf93b2c33",
+            "text": "Срок доставки в Казань составляет 3–5 рабочих дней.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/delivery-time.md",
+            "headers": [
+              "Срок доставки в Казань"
+            ],
+            "distance": 0.4108881109423561
+          }
+        ],
+        "timings": {
+          "embedding_s": 0.965620625007432,
+          "search_s": 0.059231166989775375,
+          "generation_s": 99.89575020800112,
+          "total_s": 100.92125154199312
+        }
+      },
+      "mismatches": []
+    },
+    {
+      "name": "Ответ из двух статей",
+      "question": "Сколько стоит доставка в Казань и сколько она занимает?",
+      "expected": {
+        "answer_present": true,
+        "source_files": [
+          "delivery-price.md",
+          "delivery-time.md"
+        ],
+        "needs_escalation": false,
+        "required_facts": [
+          "350 рублей",
+          "3-5 рабочих дней"
+        ]
+      },
+      "result": {
+        "answer": "Доставка в Казань стоит 350 рублей и занимает 3–5 рабочих дней.",
+        "source_ids": [
+          "4e8f962d575e960db872215d569d91f5739a485455353556ea0a277c39f7bfa2",
+          "7d9b43cde4dfd79fe1b4dc169ee833e2d6c33119674f6b498f94b5ebf93b2c33"
+        ],
+        "needs_escalation": false,
+        "reason": null,
+        "retrieved_chunks": [
+          {
+            "id": "4e8f962d575e960db872215d569d91f5739a485455353556ea0a277c39f7bfa2",
+            "text": "Стоимость доставки в Казань составляет 350 рублей.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/delivery-price.md",
+            "headers": [
+              "Стоимость доставки в Казань"
+            ],
+            "distance": 0.20379494462562364
+          },
+          {
+            "id": "7d9b43cde4dfd79fe1b4dc169ee833e2d6c33119674f6b498f94b5ebf93b2c33",
+            "text": "Срок доставки в Казань составляет 3–5 рабочих дней.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/delivery-time.md",
+            "headers": [
+              "Срок доставки в Казань"
+            ],
+            "distance": 0.24229602561616614
+          }
+        ],
+        "timings": {
+          "embedding_s": 1.249567000020761,
+          "search_s": 0.00638554198667407,
+          "generation_s": 148.8735425839841,
+          "total_s": 150.12956666600076
+        }
+      },
+      "mismatches": []
+    },
+    {
+      "name": "В базе нет ответа",
+      "question": "Можно ли оплатить заказ криптовалютой?",
+      "expected": {
+        "answer_present": false,
+        "source_files": [],
+        "needs_escalation": true,
+        "required_facts": []
+      },
+      "result": {
+        "answer": null,
+        "source_ids": [],
+        "needs_escalation": true,
+        "reason": "insufficient_information",
+        "retrieved_chunks": [
+          {
+            "id": "77d5fc1e3530252efefd5e1808154b2a29f39d4150f52bbde8db31c07b6c4a95",
+            "text": "Магазин принимает банковские карты Visa и Mastercard.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/payments.md",
+            "headers": [
+              "Способы оплаты"
+            ],
+            "distance": 0.3946227846927278
+          },
+          {
+            "id": "4e8f962d575e960db872215d569d91f5739a485455353556ea0a277c39f7bfa2",
+            "text": "Стоимость доставки в Казань составляет 350 рублей.",
+            "source_file": "/Users/natasha/Desktop/AI-Support-Desk/evals/data/rag_kb/delivery-price.md",
+            "headers": [
+              "Стоимость доставки в Казань"
+            ],
+            "distance": 0.4566941047749019
+          }
+        ],
+        "timings": {
+          "embedding_s": 1.393525709019741,
+          "search_s": 0.01737124999635853,
+          "generation_s": 28.98736470899894,
+          "total_s": 30.39835437500733
+        }
+      },
+      "mismatches": []
+    }
+  ],
+  "llm_version": "0.35.1",
+  "llm_version_error": null,
+  "passed": true,
+  "test_environment": {
+    "tei_max_batch_tokens": 512,
+    "tei_max_batch_requests": 4,
+    "postgres_port": 5436,
+    "postgres_database": "rag_eval"
+  }
+}
