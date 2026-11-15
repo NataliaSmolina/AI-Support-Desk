@@ -120,7 +120,7 @@ async def pipeline_env(tmp_kb_dir: Path, _ensure_containers) -> _PipelineEnv:
             loader=loader,
             chunker=MarkdownHeaderChunker(),
             embedder=counter,
-            db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
+            db_loader=DBLoader(pool),
             embed_batch_size=settings.embed_batch_size,
         )
         yield _PipelineEnv(
@@ -165,7 +165,9 @@ async def test_pipeline_indexes_all_chunks(pipeline_env: _PipelineEnv):
         }
 
         for row in rows:
-            assert row["embedding_dim"] == env.settings.embedding_dimension
+            assert row["embedding_dim"] > 0
+        dimensions = {row["embedding_dim"] for row in rows}
+        assert len(dimensions) == 1, f"Inconsistent embedding dimensions: {dimensions}"
 
         refunds_chunks = [
             row for row in rows if row["source_file"] == str(env.refunds)
@@ -264,10 +266,8 @@ async def test_pipeline_prunes_deleted_documents(pipeline_env: _PipelineEnv):
 @pytest.mark.asyncio
 async def test_embedder_contract_directly(_ensure_containers):
     """Прямая проверка контракта TEI /embed без полного пайплайна."""
-    from kb_index.config import Settings
     from kb_index.embedder import TeiEmbedderAdapter
 
-    settings = Settings()
     ai_settings = AISettings()
 
     tei = TeiEmbedder(
@@ -282,10 +282,10 @@ async def test_embedder_contract_directly(_ensure_containers):
         await tei.aclose()
 
     assert len(embeddings) == len(texts), "TEI returned wrong number of embeddings"
+    dimensions = {len(vec) for vec in embeddings}
+    assert len(dimensions) == 1, f"Inconsistent embedding dimensions: {dimensions}"
+    assert next(iter(dimensions)) > 0
     for i, vec in enumerate(embeddings):
-        assert len(vec) == settings.embedding_dimension, (
-            f"Embedding #{i} has dim {len(vec)}, expected {settings.embedding_dimension}. "
-        )
         assert any(v != 0.0 for v in vec), f"Embedding #{i} is all zeros"
         assert all(v == v for v in vec), f"Embedding #{i} contains NaN"  # noqa: PLR0124
 
@@ -301,11 +301,11 @@ async def test_sync_document_rolls_back_on_write_error(tmp_path, _ensure_contain
     source_file = str(tmp_path / "rollback.md")
     good = Chunk(text="good text", headers=("A",), source_file=source_file)
     bad = Chunk(text="bad\x00text", headers=("A",), source_file=source_file)
-    embeddings = [[0.0] * settings.embedding_dimension for _ in range(2)]
+    embeddings = [[0.0, 0.0, 0.0] for _ in range(2)]
 
     pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=2)
     try:
-        db = DBLoader(pool, embedding_dimension=settings.embedding_dimension)
+        db = DBLoader(pool)
 
         with pytest.raises(asyncpg.exceptions.CharacterNotInRepertoireError):
             await db.sync_document(

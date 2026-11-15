@@ -18,8 +18,6 @@ class Settings(BaseSettings):
 
     embed_batch_size: int = Field(ge=1)
 
-    embedding_dimension: int = Field(ge=1)
-
     postgres_host: str
     postgres_port: int = Field(ge=1, le=65535)
     postgres_user: str

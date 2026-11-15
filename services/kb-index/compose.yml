@@ -1,0 +1,22 @@
+services:
+  kb-index:
+    build:
+      context: ../..
+      dockerfile: services/kb-index/Dockerfile
+    environment:
+      KB_DIR: kb
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: "${POSTGRES_USER:-supportdesk}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-supportdesk}"
+      TEI_EMBED_URL: http://tei:80
+      EMBED_BATCH_SIZE: "${EMBED_BATCH_SIZE:-32}"
+    volumes:
+      - ../../kb:/app/kb:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tei:
+        condition: service_healthy
+    restart: "no"
