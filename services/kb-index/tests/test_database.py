@@ -5,8 +5,8 @@ from kb_index.database import DBLoader
 from kb_index.models import Chunk
 
 
-def make_loader(dimension: int = 3) -> DBLoader:
-    return DBLoader(pool=None, embedding_dimension=dimension)  # type: ignore[arg-type]
+def make_loader() -> DBLoader:
+    return DBLoader(pool=None)  # type: ignore[arg-type]
 
 
 def make_chunk(text: str = "text", source_file: str = "kb/a.md") -> Chunk:
@@ -38,23 +38,40 @@ async def test_sync_document_rejects_embedding_count_mismatch():
 
 @pytest.mark.asyncio
 async def test_sync_document_rejects_wrong_embedding_dimension():
-    loader = make_loader(dimension=3)
-    chunk = make_chunk()
+    loader = make_loader()
+    first = make_chunk("first")
+    second = make_chunk("second")
 
     with pytest.raises(ValueError, match="dimension 2, expected 3"):
         await loader.sync_document(
             source_file="kb/a.md",
             doc_hash="doc-hash",
             index_version="v1",
+            valid_hashes=[first.content_hash, second.content_hash],
+            chunks_to_upsert=[first, second],
+            embeddings=[[0.1, 0.2, 0.3], [0.4, 0.5]],
+        )
+
+
+@pytest.mark.asyncio
+async def test_sync_document_rejects_empty_embedding():
+    loader = make_loader()
+    chunk = make_chunk()
+
+    with pytest.raises(ValueError, match="Embedding #0 is empty"):
+        await loader.sync_document(
+            source_file="kb/a.md",
+            doc_hash="doc-hash",
+            index_version="v1",
             valid_hashes=[chunk.content_hash],
             chunks_to_upsert=[chunk],
-            embeddings=[[0.1, 0.2]],
+            embeddings=[[]],
         )
 
 
 @pytest.mark.asyncio
 async def test_sync_document_rejects_non_finite_embedding():
-    loader = make_loader(dimension=3)
+    loader = make_loader()
     chunk = make_chunk()
 
     with pytest.raises(ValueError, match="non-finite or non-numeric"):

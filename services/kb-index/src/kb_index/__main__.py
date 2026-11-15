@@ -29,7 +29,7 @@ async def main():
     logger.info("Connecting to PostgreSQL...")
     try:
         pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("Failed to connect to database")
         raise
 
@@ -42,7 +42,7 @@ async def main():
             loader=LocalDirectoryLoader(settings.kb_dir),
             chunker=MarkdownHeaderChunker(),
             embedder=TeiEmbedderAdapter(tei),
-            db_loader=DBLoader(pool, embedding_dimension=settings.embedding_dimension),
+            db_loader=DBLoader(pool),
             embed_batch_size=settings.embed_batch_size,
         )
         await pipeline.run()

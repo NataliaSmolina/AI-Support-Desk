@@ -26,9 +26,9 @@ class SyncResult:
 class DBLoader:
     """Запись и обслуживание чанков в PostgreSQL (pgvector)."""
 
-    def __init__(self, pool: asyncpg.Pool, embedding_dimension: int):
+    def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
-        self.embedding_dimension = embedding_dimension
+        self._embedding_dimension: int | None = None
 
     async def get_document_state(self, source_file: str) -> DocumentState | None:
         """Возвращает сохранённое состояние документа или None."""
@@ -189,12 +189,21 @@ class DBLoader:
                 raise ValueError(f"Duplicate chunk hash: {chunk.content_hash!r}")
             chunk_hashes.add(chunk.content_hash)
 
+        expected_dimension = self._embedding_dimension
+
         for index, vector in enumerate(embeddings):
-            if len(vector) != self.embedding_dimension:
+            if not vector:
+                raise ValueError(f"Embedding #{index} is empty")
+
+            if expected_dimension is None:
+                expected_dimension = len(vector)
+
+            if len(vector) != expected_dimension:
                 raise ValueError(
                     f"Embedding #{index} has dimension {len(vector)}, "
-                    f"expected {self.embedding_dimension}"
+                    f"expected {expected_dimension}"
                 )
+
             for value in vector:
                 if (
                     isinstance(value, bool)
@@ -204,6 +213,12 @@ class DBLoader:
                     raise ValueError(
                         f"Embedding #{index} contains a non-finite or non-numeric value"
                     )
+
+        if expected_dimension is not None and self._embedding_dimension is None:
+            self._embedding_dimension = expected_dimension
+            logger.info(
+                f"Detected embedding dimension: {self._embedding_dimension}."
+            )
 
     @staticmethod
     def _vector_literal(embedding: Sequence[float]) -> str:

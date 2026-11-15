@@ -16,7 +16,6 @@ INTEGRATION_ENV = {
     "TEI_EMBED_URL": "http://127.0.0.1:8082",
     "KB_DIR": str(Path(__file__).parent),
     "EMBED_BATCH_SIZE": "8",
-    "EMBEDDING_DIMENSION": "384",
     "POSTGRES_HOST": "127.0.0.1",
     "POSTGRES_PORT": "5435",
     "POSTGRES_USER": "kb_index_it",
