@@ -29,9 +29,9 @@ async def main():
     logger.info("Connecting to PostgreSQL...")
     try:
         pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Failed to connect to database: {e}")
-        return
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to connect to database")
+        raise
 
     tei = TeiEmbedder(
         base_url=ai_settings.tei_embed_url,
