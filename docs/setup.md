@@ -173,3 +173,16 @@ LLM_HEALTH_TIMEOUT_S=5
 Прямые вызовы `LlmClassifier`, `LlmAnswerGenerator` и `LLMClient` теперь по умолчанию
 используют Ollama независимо от URL. Для OpenAI-совместимого API передавайте
 `provider="openai"` явно. Проверка готовности доступна отдельно как `check_llm_ready`.
+
+## RAG-проверка на настоящей базе знаний
+
+Компонент `ai_clients.rag` соединяет TEI, точный поиск pgvector и генератор.
+Проверка с тестовыми Markdown выполняется на отдельной БД на порту 5436:
+
+```bash
+docker compose -f evals/compose.rag.yml up -d --wait
+uv run python -m evals.check_rag --demo --index-demo --output /tmp/rag-results.json
+```
+
+Нужны запущенные TEI и Ollama. Полная инструкция, формат результата и пример
+подключения к Worker: [rag.md](rag.md).

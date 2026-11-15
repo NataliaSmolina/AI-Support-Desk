@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Ответ из одной статьи",
+    "question": "Когда мне вернут деньги за отменённый заказ и куда они придут?",
+    "expected": {
+      "answer_present": true,
+      "source_files": ["refunds.md"],
+      "needs_escalation": false,
+      "required_facts": ["10 рабочих дней", "исходный способ оплаты"]
+    }
+  },
+  {
+    "name": "Ответ из двух статей",
+    "question": "Сколько стоит доставка в Казань и сколько она занимает?",
+    "expected": {
+      "answer_present": true,
+      "source_files": ["delivery-price.md", "delivery-time.md"],
+      "needs_escalation": false,
+      "required_facts": ["350 рублей", "3-5 рабочих дней"]
+    }
+  },
+  {
+    "name": "В базе нет ответа",
+    "question": "Можно ли оплатить заказ криптовалютой?",
+    "expected": {
+      "answer_present": false,
+      "source_files": [],
+      "needs_escalation": true,
+      "required_facts": []
+    }
+  }
+]
