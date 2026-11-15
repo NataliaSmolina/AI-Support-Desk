@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 
@@ -52,6 +53,27 @@ async def client_chat_id(pool: AsyncConnectionPool, ticket_id: int) -> int | Non
         cur = await conn.execute("SELECT chat_id FROM tickets WHERE id = %s", (ticket_id,))
         row = await cur.fetchone()
         return row[0] if row is not None else None
+
+
+async def ticket_details(pool: AsyncConnectionPool, ticket_id: int) -> tuple[dict, list[dict]] | None:
+    """Обращение и пять последних сообщений для оператора."""
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id, status, category, priority, sentiment, wants_human "
+                "FROM public.tickets WHERE id = %s",
+                (ticket_id,),
+            )
+            ticket = await cur.fetchone()
+            if ticket is None:
+                return None
+            await cur.execute(
+                "SELECT author, left(text, 300) AS text FROM public.messages "
+                "WHERE ticket_id = %s ORDER BY id DESC LIMIT 5",
+                (ticket_id,),
+            )
+            messages = await cur.fetchall()
+            return ticket, list(reversed(messages))
 
 
 async def save_operator_reply(pool: AsyncConnectionPool, ticket_id: int, text: str) -> None:
