@@ -1,15 +1,19 @@
+
 import pytest
 
-from support_worker.decision import Decision, Thresholds, decide
-
-AUTO_ON = Thresholds(auto_categories=frozenset({"billing"}))
+from support_worker.decision import Decision, decide
 
 
 def verdict(**overrides):
-    args = dict(confidence=0.9, has_sources=True, priority="normal", sentiment="calm",
-                wants_human=False, category="billing", thresholds=AUTO_ON)
+    args = dict(
+        has_sources=True,
+        rag_needs_escalation=False,
+        priority="normal",
+        sentiment="calm",
+        wants_human=False,
+    )
     args.update(overrides)
-    return decide(**args).decision
+    return decide(**args)
 
 
 @pytest.mark.parametrize("override", [
@@ -17,44 +21,42 @@ def verdict(**overrides):
     {"priority": "critical"},
     {"sentiment": "negative"},
     {"has_sources": False},
-    {"confidence": 0.54},
+    {"rag_needs_escalation": True},
 ])
 def test_escalate_triggers(override):
-    assert verdict(**override) is Decision.ESCALATE
+    assert verdict(**override).decision is Decision.ESCALATE
 
 
-def test_escalate_wins_over_high_confidence():
-    assert verdict(confidence=0.99, priority="critical") is Decision.ESCALATE
+def test_escalate_when_client_requests_operator():
+    result = verdict(wants_human=True)
+    assert result.decision is Decision.ESCALATE
+    assert result.reason == "клиент просит оператора"
 
 
-def test_auto_when_enabled_and_confident():
-    assert verdict() is Decision.AUTO
+def test_escalate_when_no_sources():
+    result = verdict(has_sources=False)
+    assert result.decision is Decision.ESCALATE
+    assert result.reason == "не найдены источники"
 
 
-@pytest.mark.parametrize("confidence, expected", [
-    (0.55, Decision.DRAFT),      
-    (0.849, Decision.DRAFT),
-    (0.85, Decision.AUTO),
-])
-def test_boundaries(confidence, expected):
-    assert verdict(confidence=confidence) is expected
+def test_escalate_when_rag_cannot_prepare_answer():
+    result = verdict(rag_needs_escalation=True)
+    assert result.decision is Decision.ESCALATE
 
 
-def test_pilot_mode_never_auto():
-    assert verdict(confidence=0.99, thresholds=Thresholds()) is Decision.DRAFT
+def test_draft_when_information_is_sufficient():
+    assert verdict().decision is Decision.DRAFT
 
 
-def test_auto_only_for_enabled_category():
-    assert verdict(category="delivery") is Decision.DRAFT
+def test_critical_priority_wins_over_other_conditions():
+    result = verdict(priority="critical", sentiment="negative")
+    assert result.decision is Decision.ESCALATE
+    assert result.reason == "критический приоритет"
 
 
-def test_custom_thresholds():
-    t = Thresholds(escalate_below=0.7, auto_from=0.95, auto_categories=frozenset({"billing"}))
-    assert verdict(confidence=0.65, thresholds=t) is Decision.ESCALATE
-    assert verdict(confidence=0.9, thresholds=t) is Decision.DRAFT
+def test_negative_sentiment_causes_escalation():
+    assert verdict(sentiment="negative").decision is Decision.ESCALATE
 
 
-@pytest.mark.parametrize("bad", [-0.1, 1.1])
-def test_invalid_confidence_raises(bad):
-    with pytest.raises(ValueError):
-        verdict(confidence=bad)
+def test_auto_is_not_used():
+    assert verdict().decision is not Decision.AUTO
