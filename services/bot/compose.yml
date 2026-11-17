@@ -1,0 +1,13 @@
+services:
+  bot:
+    image: support-bot
+
+    build:
+      context: ../.. # Корень проекта
+      dockerfile: services/bot/Dockerfile
+
+    env_file:
+      - ../../.env
+
+    init: true # pid 1
+    restart: unless-stopped
