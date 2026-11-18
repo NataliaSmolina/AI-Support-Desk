@@ -33,42 +33,34 @@ ATTACHMENT_IGNORED = "⚠️ Вложение (фото или файл) не о
 
 # --- Группа операторов ---
 
-# Заглушка, пока worker не пишет настоящие черновики
-FAKE_DRAFT = "Это тестовый черновик ответа. Настоящий напишет worker."
-
-BUTTON_SEND = "✅ Отправить"
-BUTTON_EDIT = "✏️ Исправить"
+BUTTON_REPLY = "Ответить"
+OPERATOR_REQUESTED = "Передали ваш вопрос оператору."
+OPERATOR_HANDOFF_FAILED = "Вопрос сохранен. Передача оператору не подтверждена."
 
 
-def card(question: str, draft: str, ticket_id: int | None = None) -> str:
-    """Карточка для оператора: номер тикета, вопрос клиента и черновик ответа."""
-    text = f"❓ Вопрос клиента:\n{question}\n\n📝 Черновик ответа:\n{draft}"
-    if ticket_id is None:
-        return text
-    return f"🎫 Тикет #{ticket_id}\n\n{text}"
-
-
-def card_sent(card_text: str, operator: str, *, history_saved: bool) -> str:
-    """Добавляет имя оператора и результат сохранения ответа."""
-    if history_saved:
-        status = "✅ Отправлено и сохранено"
-    else:
-        status = "⚠️ Отправлено, история не сохранена"
-    return f"{card_text}\n\n{status}: {operator}"
+def card(question: str, ticket_id: int, *, requested_operator: bool) -> str:
+    reason = "Клиент попросил оператора" if requested_operator else "Требуется ответ оператора"
+    return f"Обращение #{ticket_id}\n{reason}\n\nВопрос клиента:\n{question[:1800]}"
 
 
 # Всплывающие окна у оператора после нажатия кнопки
-CLIENT_BLOCKED = "Клиент заблокировал бота, ответ не доставлен."
-REPLY_SEND_UNCONFIRMED = "Отправка не подтверждена. Проверьте доставку."
-CARD_TOO_OLD = "Карточка слишком старая, бот не может ее изменить."
+CLIENT_BLOCKED = "Не удалось отправить ответ. Код: 101"
+REPLY_SEND_UNCONFIRMED = "Отправка не подтверждена. Код: 102"
 CARD_OUTDATED = "Карточка устарела: ее кнопки больше не поддерживаются."
 TICKET_UNAVAILABLE = "Не удалось получить обращение. Попробуйте позже."
 TICKET_NOT_FOUND = "Обращение не найдено. Ответ не отправлен."
-REPLY_SAVE_FAILED = "Ответ доставлен, но не сохранен в истории. Не отправляйте его повторно."
-CARD_UPDATE_FAILED = "Карточку не удалось обновить. Ответ уже доставлен, не отправляйте его повторно."
-EDIT_NOT_READY = "Исправление черновика скоро будет."
+REPLY_SAVE_FAILED = "Ответ отправлен, но не сохранен в истории. Код: 204"
+CARD_UPDATE_FAILED = "Ответ отправлен, карточка не обновлена. Код: 103"
 NOT_OPERATOR = "Отвечать на заявки могут только операторы."
 TICKET_USAGE = "Укажите номер обращения: /ticket №"
+REPLY_PROMPT_PREFIX = "Напишите ответ на обращение #"
+REPLY_LINK_INVALID = "Неверная ссылка на обращение."
+REPLY_OPEN_FROM_CARD = "Снова нажмите «Ответить» на карточке обращения в группе."
+REPLY_ALREADY_OPEN = "Сначала отправьте текущий ответ или отмените его через /cancel."
+REPLY_NOT_OPEN = "Нет активного ответа. Откройте обращение из карточки."
+REPLY_CANCELLED = "Ответ отменен."
+REPLY_USE_PROMPT = "Ответьте на подсказку бота или отправьте /cancel."
+REPLY_TEXT_REQUIRED = "Отправьте текст в ответ на подсказку бота."
 
 
 def ticket_details(ticket: dict, messages: list[dict]) -> str:

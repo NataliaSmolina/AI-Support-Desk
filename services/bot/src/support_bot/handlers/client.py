@@ -4,13 +4,14 @@ import logging
 
 import psycopg
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, Update
 from psycopg_pool import AsyncConnectionPool
 
 from support_bot import db, texts
 from support_bot.config import BotSettings
-from support_bot.keyboards import draft_keyboard
+from support_bot.keyboards import reply_keyboard
 
 # Все хендлеры этого файла работают только в личке с ботом, не в группах
 PRIVATE_CHAT = F.chat.type == "private"
@@ -77,21 +78,28 @@ async def question(
         return
     logger.info("Тикет %s от chat_id=%s", ticket_id, message.chat.id)
 
-    await message.answer(texts.accepted(ticket_id))
+    requested_operator = " ".join(text.casefold().split()) == "позови оператора"
+    handed_off = False
+    if settings.operator_chat_id is not None:
+        # Пока результат Worker не подключен, все обращения направляем оператору.
+        try:
+            await bot.send_message(
+                chat_id=settings.operator_chat_id,
+                message_thread_id=settings.operator_thread_id,
+                text=texts.card(text, ticket_id, requested_operator=requested_operator),
+                reply_markup=reply_keyboard(ticket_id),
+            )
+            handed_off = True
+        except TelegramAPIError:
+            logger.exception("Не удалось отправить карточку обращения %s", ticket_id)
+
+    answer = texts.accepted(ticket_id)
+    if requested_operator:
+        handoff_status = texts.OPERATOR_REQUESTED if handed_off else texts.OPERATOR_HANDOFF_FAILED
+        answer = f"Обращение #{ticket_id}. {handoff_status}"
+    await message.answer(answer)
     if message.caption:
         await message.answer(texts.ATTACHMENT_IGNORED)
-
-    if settings.operator_chat_id is None:
-        return
-
-    # Прототип: позже карточку будет отправлять не этот хендлер, а бот по готовому черновику из базы
-    await bot.send_message(
-        chat_id=settings.operator_chat_id,
-        message_thread_id=settings.operator_thread_id,
-        text=texts.card(text, texts.FAKE_DRAFT, ticket_id),
-        reply_markup=draft_keyboard(ticket_id),
-    )
-
 
 # Сюда доходит только то, где нет ни текста, ни подписи: стикер, голосовое, фото без подписи.
 @router.message(~F.text)
