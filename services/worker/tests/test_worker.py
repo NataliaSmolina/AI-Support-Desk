@@ -4,7 +4,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-
+from types import SimpleNamespace
 from ai_clients.llm import (
     Category, Classification, ClassificationError, Priority, Sentiment,
 )
@@ -24,6 +24,13 @@ SETTINGS = Settings(dsn=TEST_DSN or "", max_attempts=3, lock_timeout_s=30,
 OK = Classification(category=Category.DELIVERY, priority=Priority.NORMAL,
                     sentiment=Sentiment.CALM, wants_human=False)
 
+class FakeRag:
+    async def answer_question(self, question: str):
+        return SimpleNamespace(
+            answer="Ваш заказ уже отправлен.",
+            source_ids=["delivery_policy.pdf"],
+            needs_escalation=False,
+        )
 
 class FakeClassifier:
     def __init__(self, result=OK, error=None, hook=None):
@@ -70,14 +77,17 @@ def state(conn, tid=None):
     conn.commit()
     where, args = ("WHERE id = %s", (tid,)) if tid else ("", ())
     return conn.execute(
-        "SELECT status, attempts, last_error, locked_by, category, decision "
+        "SELECT status, attempts, last_error, locked_by, category, decision, "
+        "decision_reason, answer, source_ids "
         f"FROM public.tickets {where} ORDER BY id", args
     ).fetchone()
 
 
 async def run_once(conn, classifier):
     ticket = claim_ticket(conn, "w1")
-    return await handle_ticket(conn, ticket, "w1", SETTINGS, classifier)
+    return await handle_ticket(
+        conn, ticket, "w1", SETTINGS, classifier, FakeRag()
+    )
 
 
 def test_backoff_grows_and_is_capped():
@@ -102,9 +112,29 @@ def test_claim_skips_ticket_without_client_message_and_backoff(conn):
 
 async def test_success_saves_classification(conn):
     add_ticket(conn)
+
     assert await run_once(conn, FakeClassifier()) == "done"
-    status, attempts, err, locked_by, category, _ = state(conn)
-    assert (status, locked_by, category, err) == ("classified", None, "delivery", None)
+
+    (
+        status,
+        attempts,
+        err,
+        locked_by,
+        category,
+        decision,
+        decision_reason,
+        answer,
+        source_ids,
+    ) = state(conn)
+
+    assert status == "classified"
+    assert locked_by is None
+    assert category == "delivery"
+    assert decision == "draft"
+    assert decision_reason is not None
+    assert answer == "Ваш заказ уже отправлен."
+    assert source_ids == ["delivery_policy.pdf"]
+    assert err is None
 
 
 async def test_transient_error_returns_ticket_to_queue_with_backoff(conn):
@@ -119,8 +149,10 @@ async def test_transient_error_returns_ticket_to_queue_with_backoff(conn):
 async def test_ticket_fails_after_last_attempt(conn):
     add_ticket(conn, attempts=2)
     assert await run_once(conn, FakeClassifier(error=RuntimeError("снова"))) == "failed"
-    status, _, _, _, _, decision = state(conn)
-    assert (status, decision) == ("failed", "escalate")
+
+    result = state(conn)
+    assert result[0] == "failed"
+    assert result[5] == "escalate"
 
 
 async def test_permanent_error_fails_immediately(conn):
@@ -137,8 +169,11 @@ async def test_result_discarded_if_ticket_was_taken_over(conn):
             other.execute("UPDATE public.tickets SET locked_by = 'w2'")
 
     assert await run_once(conn, FakeClassifier(hook=steal)) == "lost"
-    status, _, _, locked_by, category, _ = state(conn)
-    assert (status, locked_by, category) == ("processing", "w2", None)
+
+    result = state(conn)
+    assert result[0] == "processing"
+    assert result[3] == "w2"
+    assert result[4] is None
 
 
 async def test_heartbeat_refreshes_lock_during_long_processing(conn):

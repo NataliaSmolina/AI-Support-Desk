@@ -51,25 +51,54 @@ def touch_ticket(conn: psycopg.Connection, ticket_id: int, worker_id: str) -> bo
     return cur.rowcount == 1
 
 
-def finish_classification(
-    conn: psycopg.Connection, ticket_id: int, worker_id: str, *,
-    category: str, priority: str, sentiment: str, wants_human: bool,
+def finish_processing(
+    conn: psycopg.Connection,
+    ticket_id: int,
+    worker_id: str,
+    *,
+    category: str,
+    priority: str,
+    sentiment: str,
+    wants_human: bool,
+    decision: str,
+    decision_reason: str,
+    answer: str | None,
+    source_ids: list[str],
 ) -> bool:
-    """Сохраняет результат классификации. False: тикет уже не наш, результат отбрасывается"""
+    """Сохраняет полный результат обработки тикета."""
     cur = conn.execute(
-        "UPDATE public.tickets SET status = 'classified', category = %(category)s, "
-        "priority = %(priority)s, sentiment = %(sentiment)s, wants_human = %(wants_human)s, "
-        f"locked_at = NULL, locked_by = NULL, last_error = NULL WHERE {_OWNED}",
-        {"id": ticket_id, "worker": worker_id, "category": category, "priority": priority,
-         "sentiment": sentiment, "wants_human": wants_human},
+        "UPDATE public.tickets SET "
+        "status = 'classified', "
+        "category = %(category)s, "
+        "priority = %(priority)s, "
+        "sentiment = %(sentiment)s, "
+        "wants_human = %(wants_human)s, "
+        "decision = %(decision)s, "
+        "decision_reason = %(decision_reason)s, "
+        "answer = %(answer)s, "
+        "source_ids = %(source_ids)s, "
+        "locked_at = NULL, locked_by = NULL, last_error = NULL "
+        f"WHERE {_OWNED}",
+        {
+            "id": ticket_id,
+            "worker": worker_id,
+            "category": category,
+            "priority": priority,
+            "sentiment": sentiment,
+            "wants_human": wants_human,
+            "decision": decision,
+            "decision_reason": decision_reason,
+            "answer": answer,
+            "source_ids": source_ids,
+        },
     )
     conn.commit()
     return cur.rowcount == 1
 
 
 def release_for_retry(
-    conn: psycopg.Connection, ticket_id: int, worker_id: str, error: str, delay_s: float,
-    *, refund_attempt: bool = False,
+        conn: psycopg.Connection, ticket_id: int, worker_id: str, error: str, delay_s: float,
+        *, refund_attempt: bool = False,
 ) -> bool:
     """Временная ошибка: тикет возвращается в очередь и станет доступен через delay_s секунд.
 
@@ -98,7 +127,7 @@ def mark_failed(conn: psycopg.Connection, ticket_id: int, worker_id: str, error:
 
 
 def recover_stuck(
-    conn: psycopg.Connection, max_attempts: int, lock_timeout_s: float
+        conn: psycopg.Connection, max_attempts: int, lock_timeout_s: float
 ) -> tuple[list[int], list[int]]:
     """Возвращает id вернувшихся в очередь, id отправленных оператору
 

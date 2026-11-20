@@ -1,0 +1,8 @@
+BEGIN;
+
+ALTER TABLE public.tickets
+    ADD COLUMN IF NOT EXISTS answer TEXT,
+    ADD COLUMN IF NOT EXISTS source_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS decision_reason TEXT;
+
+COMMIT;
