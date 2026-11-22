@@ -38,3 +38,10 @@ class Chunk:
         with them and is safe to use as the UPSERT key.
         """
         return _stable_hash(self.source_file, self.text, *self.headers)
+
+    @property
+    def embedding_text(self) -> str:
+        """Текст для эмбеддинга: иерархия заголовков + тело чанка."""
+        if not self.headers:
+            return self.text
+        return " → ".join(self.headers) + "\n\n" + self.text

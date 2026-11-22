@@ -28,10 +28,12 @@ class _CountingEmbedder:
         self.inner = inner
         self.calls = 0
         self.texts = 0
+        self.inputs: list[str] = []
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
         self.texts += len(texts)
+        self.inputs.extend(texts)
         return await self.inner.embed(texts)
 
 
@@ -63,6 +65,7 @@ class _PipelineEnv:
     def reset_counters(self) -> None:
         self.counter.calls = 0
         self.counter.texts = 0
+        self.counter.inputs = []
         self.loader.calls = 0
         self.loader.documents = []
 
@@ -151,6 +154,11 @@ async def test_pipeline_indexes_all_chunks(pipeline_env: _PipelineEnv):
     assert env.loader.calls == 1
     assert len(env.loader.documents) == 2
     assert env.counter.texts == 3
+    assert "Refunds\n\nMoney is returned within 3 business days." in env.counter.inputs
+    assert (
+        "Refunds → How to request\n\nWrite to support@example.com."
+        in env.counter.inputs
+    )
 
     async with env.pool.acquire() as conn:
         rows = await conn.fetch(

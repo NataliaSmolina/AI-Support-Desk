@@ -7,7 +7,7 @@ from .loader import Loader
 
 logger = logging.getLogger(__name__)
 
-INDEX_VERSION = "markdown-header-v1"
+INDEX_VERSION = "markdown-header-v2"
 
 
 class Pipeline:
@@ -58,7 +58,9 @@ class Pipeline:
                 )
                 for i in range(0, len(chunks_to_process), self.embed_batch_size):
                     batch = chunks_to_process[i:i + self.embed_batch_size]
-                    embeddings.extend(await self.embedder.embed([c.text for c in batch]))
+                    embeddings.extend(
+                        await self.embedder.embed([c.embedding_text for c in batch])
+                    )
             else:
                 logger.info(
                     f"Skipped {doc.source_file}: no chunk changes, updating document state."
