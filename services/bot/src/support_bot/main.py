@@ -4,11 +4,12 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import BotCommand
 
 from support_bot import db, texts
 from support_bot.config import BotSettings
-from support_bot.handlers import client, operator
+from support_bot.handlers import client, operator, reply
 
 # Команды для кнопки «Меню» в Telegram
 COMMANDS = [
@@ -30,7 +31,8 @@ async def main() -> None:
     else:
         pool = await db.open_pool(settings.database_url.get_secret_value())
 
-    dispatcher = Dispatcher(settings=settings, pool=pool)
+    dispatcher = Dispatcher(settings=settings, pool=pool, events_isolation=SimpleEventIsolation())
+    dispatcher.include_router(reply.router)
     dispatcher.include_router(client.router)
     dispatcher.include_router(operator.router)
 

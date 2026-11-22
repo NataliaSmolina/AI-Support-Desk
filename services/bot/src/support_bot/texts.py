@@ -3,7 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from aiogram.utils.formatting import Bold, Text
+from aiogram.utils.formatting import Bold, Italic, Text
 
 START = (
     "AI-Support-Desk"
@@ -33,45 +33,61 @@ ATTACHMENT_IGNORED = "⚠️ Вложение (фото или файл) не о
 
 # --- Группа операторов ---
 
-# Заглушка, пока worker не пишет настоящие черновики
-FAKE_DRAFT = "Это тестовый черновик ответа. Настоящий напишет worker."
-
-BUTTON_SEND = "✅ Отправить"
-BUTTON_EDIT = "✏️ Исправить"
+BUTTON_REPLY = "Ответить"
+OPERATOR_REQUESTED = "Передали ваш вопрос оператору."
+OPERATOR_HANDOFF_FAILED = "Вопрос сохранен. Передача оператору не подтверждена."
 
 
-def card(question: str, draft: str, ticket_id: int | None = None) -> str:
-    """Карточка для оператора: номер тикета, вопрос клиента и черновик ответа."""
-    text = f"❓ Вопрос клиента:\n{question}\n\n📝 Черновик ответа:\n{draft}"
-    if ticket_id is None:
-        return text
-    return f"🎫 Тикет #{ticket_id}\n\n{text}"
-
-
-def card_sent(card_text: str, operator: str, *, history_saved: bool) -> str:
-    """Добавляет имя оператора и результат сохранения ответа."""
-    if history_saved:
-        status = "✅ Отправлено и сохранено"
-    else:
-        status = "⚠️ Отправлено, история не сохранена"
-    return f"{card_text}\n\n{status}: {operator}"
+def card(question: str, ticket_id: int, *, requested_operator: bool) -> str:
+    reason = "Клиент попросил оператора" if requested_operator else "Требуется ответ оператора"
+    return f"Обращение #{ticket_id}\n{reason}\n\nВопрос клиента:\n{question[:1800]}"
 
 
 # Всплывающие окна у оператора после нажатия кнопки
-CLIENT_BLOCKED = "Клиент заблокировал бота, ответ не доставлен."
-REPLY_SEND_UNCONFIRMED = "Отправка не подтверждена. Проверьте доставку."
-CARD_TOO_OLD = "Карточка слишком старая, бот не может ее изменить."
+CLIENT_BLOCKED = "Не удалось отправить ответ. Код: 101"
+REPLY_SEND_UNCONFIRMED = "Отправка не подтверждена. Код: 102"
 CARD_OUTDATED = "Карточка устарела: ее кнопки больше не поддерживаются."
 TICKET_UNAVAILABLE = "Не удалось получить обращение. Попробуйте позже."
 TICKET_NOT_FOUND = "Обращение не найдено. Ответ не отправлен."
-REPLY_SAVE_FAILED = "Ответ доставлен, но не сохранен в истории. Не отправляйте его повторно."
-CARD_UPDATE_FAILED = "Карточку не удалось обновить. Ответ уже доставлен, не отправляйте его повторно."
-EDIT_NOT_READY = "Исправление черновика скоро будет."
+REPLY_SAVE_FAILED = "Ответ отправлен, но не сохранен в истории. Код: 204"
+CARD_UPDATE_FAILED = "Ответ отправлен, карточка не обновлена. Код: 103"
 NOT_OPERATOR = "Отвечать на заявки могут только операторы."
 TICKET_USAGE = "Укажите номер обращения: /ticket №"
+REPLY_PROMPT_PREFIX = "Напишите ответ на обращение #"
+REPLY_LINK_INVALID = "Неверная ссылка на обращение."
+REPLY_OPEN_FROM_CARD = "Снова нажмите «Ответить» на карточке обращения в группе."
+REPLY_ALREADY_OPEN = "Сначала отправьте текущий ответ или отмените его через /cancel."
+REPLY_NOT_OPEN = "Нет активного ответа. Откройте обращение из карточки."
+REPLY_CANCELLED = "Ответ отменен."
+REPLY_USE_PROMPT = "Ответьте на подсказку бота или отправьте /cancel."
+REPLY_TEXT_REQUIRED = "Отправьте текст в ответ на подсказку бота."
 
 
-def ticket_details(ticket: dict, messages: list[dict]) -> str:
+def worker_result(ticket: dict) -> str:
+    """Результат обработки для просмотра оператором."""
+    decision = ticket.get("decision")
+    if not decision:
+        return "Результат обработки еще не готов."
+
+    if decision == "escalate":
+        reason = (ticket.get("decision_reason") or "").strip()
+        if ticket.get("wants_human") and reason.casefold() == "клиент просит оператора":
+            return "Нужен оператор."
+        return f"Нужен оператор.\n{reason}" if reason else "Нужен оператор."
+
+    if decision in {"draft", "auto"}:
+        title = "Черновик ответа" if decision == "draft" else "Автоматический ответ"
+        answer = (ticket.get("answer") or "").strip()
+        if not answer:
+            return f"{title} отсутствует."
+        if len(answer) > 1500:
+            answer = answer[:1499].rstrip() + "…"
+        return f"{title}:\n{answer}"
+
+    return "Неизвестное решение обработки."
+
+
+def ticket_details(ticket: dict, messages: list[dict]) -> Text:
     """Карточка для команды /ticket, сообщения могут быть сокращены."""
     human = ticket["wants_human"]
     human_text = "Не определено" if human is None else ("Да" if human else "Нет")
@@ -82,15 +98,17 @@ def ticket_details(ticket: dict, messages: list[dict]) -> str:
         f"Приоритет: {ticket['priority'] or 'Не определен'}",
         f"Настроение: {ticket['sentiment'] or 'Не определено'}",
         f"Просьба об операторе: {human_text}",
-        "\nПоследние сообщения (до 300 символов):",
+        f"\nРезультат обработки:\n{worker_result(ticket)}",
+        "\nПоследние сообщения:",
     ]
-    authors = {"client": "Клиент", "operator": "Оператор", "bot": "Бот"}
+    parts: list[str | Text] = ["\n".join(lines)]
+    authors = {"client": Bold("Клиент"), "operator": Italic("Оператор"), "bot": "Бот"}
     for message in messages:
         author = authors.get(message["author"], message["author"])
-        lines.append(f"{author}: {message['text']}")
+        parts.extend(("\n", author, f": {message['text']}"))
     if not messages:
-        lines.append("Сообщений пока нет")
-    return "\n".join(lines)
+        parts.append("\nСообщений пока нет")
+    return Text(*parts)
 
 
 # --- Команда /status ---

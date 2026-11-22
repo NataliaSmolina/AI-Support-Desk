@@ -56,11 +56,12 @@ async def client_chat_id(pool: AsyncConnectionPool, ticket_id: int) -> int | Non
 
 
 async def ticket_details(pool: AsyncConnectionPool, ticket_id: int) -> tuple[dict, list[dict]] | None:
-    """Обращение и пять последних сообщений для оператора."""
+    """Обращение, результат Worker и пять последних сообщений для оператора."""
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT id, status, category, priority, sentiment, wants_human "
+                "SELECT id, status, category, priority, sentiment, wants_human, "
+                "decision, decision_reason, answer "
                 "FROM public.tickets WHERE id = %s",
                 (ticket_id,),
             )
