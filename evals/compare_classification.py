@@ -52,6 +52,10 @@ async def evaluate_case(classifier, case):
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=Path('/tmp/week05-classification.json'))
+    parser.add_argument('--before-prompt', type=Path, default=Path('evals/prompts/classifier_v1.txt'),
+                        help='Файл промпта до изменения; новый вариант берётся из ai_clients.llm')
+    parser.add_argument('--after-only', action='store_true',
+                        help='Проверить только текущий промпт на обоих наборах без парного сравнения')
     parser.add_argument('--limit', type=int, help='Smoke-прогон: первые N случаев каждого набора; не полная оценка')
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
@@ -62,10 +66,12 @@ async def main():
     except LLMReadinessError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    prompts = {'before': Path('evals/prompts/classifier_v1.txt').read_text().rstrip('\n'), 'after': SYSTEM_PROMPT}
+    prompts = {'after': SYSTEM_PROMPT} if args.after_only else {
+        'before': args.before_prompt.read_text().rstrip('\n'), 'after': SYSTEM_PROMPT}
     report = {'date_utc': datetime.now(timezone.utc).isoformat(), 'machine': platform.platform(),
               'settings': settings.model_dump(include={'llm_provider', 'llm_base_url', 'llm_model', 'request_timeout_s'}),
               'server_version': await read_server_version(settings.llm_provider, settings.llm_base_url, settings.llm_health_timeout_s),
+              'mode': 'after_only' if args.after_only else 'paired',
               'partial': args.limit is not None, 'complete': False, 'prompts': prompts, 'datasets': {}, 'warmup_errors': {}}
     clients = {name: LlmClassifier(settings.llm_base_url, settings.llm_model, settings.request_timeout_s,
                                    provider=settings.llm_provider, system_prompt=prompt) for name, prompt in prompts.items()}

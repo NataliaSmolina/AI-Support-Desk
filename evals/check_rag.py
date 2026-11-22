@@ -38,7 +38,7 @@ async def index_demo(ai: AISettings) -> None:
     try:
         pipeline = Pipeline(
             LocalDirectoryLoader(str(ROOT / "evals/data/rag_kb")), MarkdownHeaderChunker(),
-            TeiEmbedderAdapter(tei), DBLoader(pool, embedding_dimension=1024), embed_batch_size=8,
+            TeiEmbedderAdapter(tei), DBLoader(pool), embed_batch_size=8,
         )
         await pipeline.run()
     finally:

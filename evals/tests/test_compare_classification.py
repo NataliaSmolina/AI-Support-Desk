@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ai_clients.llm import ClassificationError
 from evals.compare_classification import evaluate_case, load_cases, summarize
 
@@ -34,7 +36,8 @@ async def test_failed_request_is_preserved():
     assert row['mismatches'] == ['timeout']
 
 
-async def test_comparison_saves_complete_report_and_nonzero_on_quality_failure(monkeypatch, tmp_path):
+@pytest.mark.parametrize('custom_before,after_only', [(False, False), (True, False), (False, True)])
+async def test_comparison_saves_complete_report_and_nonzero_on_quality_failure(monkeypatch, tmp_path, custom_before, after_only):
     import json
     import sys
     from ai_clients.llm import Classification
@@ -59,7 +62,14 @@ async def test_comparison_saves_complete_report_and_nonzero_on_quality_failure(m
         return 'test', None
 
     output = tmp_path / 'report.json'
-    monkeypatch.setattr(sys, 'argv', ['compare', '--output', str(output), '--limit', '1'])
+    argv = ['compare', '--output', str(output), '--limit', '1']
+    if custom_before:
+        before = tmp_path / 'before.txt'
+        before.write_text('previous deployed prompt\n')
+        argv += ['--before-prompt', str(before)]
+    if after_only:
+        argv += ['--after-only', '--before-prompt', str(tmp_path / 'not-needed.txt')]
+    monkeypatch.setattr(sys, 'argv', argv)
     monkeypatch.setattr(module, 'check_llm_ready', ready)
     monkeypatch.setattr(module, 'read_server_version', version)
     monkeypatch.setattr(module, 'LlmClassifier', FakeClassifier)
@@ -68,6 +78,11 @@ async def test_comparison_saves_complete_report_and_nonzero_on_quality_failure(m
     report = json.loads(output.read_text())
     assert report['complete'] is True
     assert report['partial'] is True
-    assert len(seen) == 6  # Two warmups plus two prompts for each of two datasets.
-    assert len(closed) == 2
+    if custom_before:
+        assert report['prompts']['before'] == 'previous deployed prompt'
+        assert seen[0] == ('previous deployed prompt', 'Какие способы оплаты доступны?')
+    assert report['mode'] == ('after_only' if after_only else 'paired')
+    assert set(report['prompts']) == ({'after'} if after_only else {'before', 'after'})
+    assert len(seen) == (3 if after_only else 6)
+    assert len(closed) == (1 if after_only else 2)
     assert report['datasets']['validation']['summary']['after']['exact'] == 0
