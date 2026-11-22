@@ -12,8 +12,11 @@ services:
       POSTGRES_DB: "${POSTGRES_DB:-supportdesk}"
       TEI_EMBED_URL: http://tei:80
       EMBED_BATCH_SIZE: "${EMBED_BATCH_SIZE:-32}"
+      CHUNK_MAX_TOKENS: "${CHUNK_MAX_TOKENS:-512}"
+      TOKENIZER_CACHE_DIR: /tei-models
     volumes:
       - ../../kb:/app/kb:ro
+      - tei-models:/tei-models:ro
     depends_on:
       postgres:
         condition: service_healthy
