@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from typing import Protocol
 
@@ -45,3 +46,12 @@ def find_tokenizer_path(
         )
 
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def sha256_file(path: str | Path) -> str:
+    """Считает SHA-256 файла, например tokenizer.json."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -11,8 +11,8 @@ from .config import Settings
 from .database import DBLoader
 from .embedder import TeiEmbedderAdapter
 from .loader import LocalDirectoryLoader
-from .pipeline import Pipeline
-from .tokenization import HfTokenizerCounter, find_tokenizer_path
+from .pipeline import INDEX_VERSION, Pipeline, build_index_fingerprint
+from .tokenization import HfTokenizerCounter, find_tokenizer_path, sha256_file
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +56,22 @@ async def main():
             )
         )
         tokenizer = HfTokenizerCounter(tokenizer_path)
+        tokenizer_sha256 = sha256_file(tokenizer_path)
+        model_sha = info.get("model_sha")
+        if not isinstance(model_sha, str):
+            model_sha = None
+        index_fingerprint = build_index_fingerprint(
+            index_version=INDEX_VERSION,
+            model_id=model_id,
+            model_sha=model_sha,
+            tokenizer_sha256=tokenizer_sha256,
+            chunk_max_tokens=max_tokens,
+        )
         logger.info(
             f"Tokenizer: {tokenizer_path} "
             f"(model={model_id}, max_tokens={max_tokens})"
         )
+        logger.info(f"Index fingerprint: {index_fingerprint}")
 
         pipeline = Pipeline(
             loader=LocalDirectoryLoader(settings.kb_dir),
@@ -70,6 +82,7 @@ async def main():
             embedder=TeiEmbedderAdapter(tei),
             db_loader=DBLoader(pool),
             embed_batch_size=settings.embed_batch_size,
+            index_fingerprint=index_fingerprint,
         )
         await pipeline.run()
     finally:
