@@ -4,6 +4,7 @@ Run from the repository root: uv run python evals/check_tei_contract.py
 The measured result is written to docs/experiments/03-tei-embedding-api-contract-live-results.md.
 """
 
+import argparse
 import asyncio
 import platform
 import sys
@@ -22,6 +23,10 @@ RESULTS = Path("docs/experiments/03-tei-embedding-api-contract-live-results.md")
 
 
 async def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=RESULTS,
+                        help="Путь отчёта; задайте новый файл для сохранения исторических результатов")
+    args = parser.parse_args()
     settings = AISettings()
     embedder = TeiEmbedder(settings.tei_embed_url, settings.request_timeout_s)
     try:
@@ -68,9 +73,10 @@ async def main() -> int:
         "вектора выполняются отдельно в `libs/ai-clients/tests/test_tei.py` с MockTransport.",
         "",
     ]
-    RESULTS.write_text("\n".join(lines), encoding="utf-8")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
-    print(f"Записано в {RESULTS}")
+    print(f"Записано в {args.output}")
     return 0
 
 

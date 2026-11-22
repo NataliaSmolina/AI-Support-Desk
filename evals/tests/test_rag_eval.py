@@ -3,6 +3,27 @@ from ai_clients.retrieval import RetrievedChunk
 from evals.check_rag import check_result, error_types
 
 
+async def test_demo_indexing_is_compatible_with_kb_index(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from evals import check_rag
+    from ai_clients.config import AISettings
+    from kb_index.pipeline import Pipeline
+
+    pool = AsyncMock()
+    monkeypatch.setattr(check_rag.asyncpg, "create_pool", AsyncMock(return_value=pool))
+    tei = AsyncMock()
+    monkeypatch.setattr(check_rag, "TeiEmbedder", lambda *args: tei)
+    run = AsyncMock()
+    monkeypatch.setattr(Pipeline, "run", run)
+
+    # Настоящие Pipeline и DBLoader должны собраться без несовместимых параметров.
+    await check_rag.index_demo(AISettings(_env_file=None))
+    run.assert_awaited_once()
+    pool.close.assert_awaited_once()
+    tei.aclose.assert_awaited_once()
+
+
 def test_eval_checks_fact_and_source_from_real_hash():
     result = RagResult(
         answer="Возврат за 10 дней.", source_ids=["real-content-hash"], needs_escalation=False,
