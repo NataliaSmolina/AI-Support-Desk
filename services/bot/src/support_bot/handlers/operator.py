@@ -56,7 +56,7 @@ async def ticket_command(
         await message.answer(texts.TICKET_NOT_FOUND)
         return
     ticket, messages = details
-    await message.answer(texts.ticket_details(ticket, messages))
+    await message.answer(**texts.ticket_details(ticket, messages).as_kwargs())
 
 
 # Уже отправленные карточки сохраняют старые callback-кнопки.

@@ -3,7 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from aiogram.utils.formatting import Bold, Text
+from aiogram.utils.formatting import Bold, Italic, Text
 
 START = (
     "AI-Support-Desk"
@@ -63,7 +63,31 @@ REPLY_USE_PROMPT = "Ответьте на подсказку бота или о�
 REPLY_TEXT_REQUIRED = "Отправьте текст в ответ на подсказку бота."
 
 
-def ticket_details(ticket: dict, messages: list[dict]) -> str:
+def worker_result(ticket: dict) -> str:
+    """Результат обработки для просмотра оператором."""
+    decision = ticket.get("decision")
+    if not decision:
+        return "Результат обработки еще не готов."
+
+    if decision == "escalate":
+        reason = (ticket.get("decision_reason") or "").strip()
+        if ticket.get("wants_human") and reason.casefold() == "клиент просит оператора":
+            return "Нужен оператор."
+        return f"Нужен оператор.\n{reason}" if reason else "Нужен оператор."
+
+    if decision in {"draft", "auto"}:
+        title = "Черновик ответа" if decision == "draft" else "Автоматический ответ"
+        answer = (ticket.get("answer") or "").strip()
+        if not answer:
+            return f"{title} отсутствует."
+        if len(answer) > 1500:
+            answer = answer[:1499].rstrip() + "…"
+        return f"{title}:\n{answer}"
+
+    return "Неизвестное решение обработки."
+
+
+def ticket_details(ticket: dict, messages: list[dict]) -> Text:
     """Карточка для команды /ticket, сообщения могут быть сокращены."""
     human = ticket["wants_human"]
     human_text = "Не определено" if human is None else ("Да" if human else "Нет")
@@ -74,15 +98,17 @@ def ticket_details(ticket: dict, messages: list[dict]) -> str:
         f"Приоритет: {ticket['priority'] or 'Не определен'}",
         f"Настроение: {ticket['sentiment'] or 'Не определено'}",
         f"Просьба об операторе: {human_text}",
-        "\nПоследние сообщения (до 300 символов):",
+        f"\nРезультат обработки:\n{worker_result(ticket)}",
+        "\nПоследние сообщения:",
     ]
-    authors = {"client": "Клиент", "operator": "Оператор", "bot": "Бот"}
+    parts: list[str | Text] = ["\n".join(lines)]
+    authors = {"client": Bold("Клиент"), "operator": Italic("Оператор"), "bot": "Бот"}
     for message in messages:
         author = authors.get(message["author"], message["author"])
-        lines.append(f"{author}: {message['text']}")
+        parts.extend(("\n", author, f": {message['text']}"))
     if not messages:
-        lines.append("Сообщений пока нет")
-    return "\n".join(lines)
+        parts.append("\nСообщений пока нет")
+    return Text(*parts)
 
 
 # --- Команда /status ---
