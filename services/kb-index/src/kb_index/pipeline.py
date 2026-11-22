@@ -9,7 +9,7 @@ from .loader import Loader
 
 logger = logging.getLogger(__name__)
 
-INDEX_VERSION = "markdown-header-v3"
+INDEX_VERSION = "markdown-header-v4"
 
 
 def build_index_fingerprint(

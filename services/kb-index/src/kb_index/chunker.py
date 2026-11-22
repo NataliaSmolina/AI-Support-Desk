@@ -95,10 +95,11 @@ class MarkdownHeaderChunker:
         pieces: list[tuple[str, str]] = []
         for block in self._blocks(text):
             block_pieces = self._split_block(headers, block)
+            structured = self._is_table(block) or self._is_code_block(block)
             for index, piece in enumerate(block_pieces):
                 if not pieces:
                     separator = ""
-                elif index == 0:
+                elif index == 0 or structured:
                     separator = "\n\n"
                 else:
                     separator = " "
@@ -134,8 +135,11 @@ class MarkdownHeaderChunker:
         if self._fits(headers, block):
             return [block]
 
-        if block.lstrip().startswith("```"):
-            return self._hard_split(headers, block)
+        if self._is_table(block):
+            return self._split_table(headers, block)
+
+        if self._is_code_block(block):
+            return self._split_code_block(headers, block)
 
         sentences = [
             sentence.strip()
@@ -153,6 +157,97 @@ class MarkdownHeaderChunker:
                 pieces.extend(self._hard_split(headers, sentence))
 
         return pieces
+
+    @staticmethod
+    def _is_table(block: str) -> bool:
+        lines = [line for line in block.splitlines() if line.strip()]
+        return (
+            len(lines) >= 2
+            and all(line.lstrip().startswith("|") for line in lines)
+        )
+
+    @staticmethod
+    def _is_code_block(block: str) -> bool:
+        return block.lstrip().startswith("```")
+
+    def _split_table(self, headers: tuple[str, ...], block: str) -> list[str]:
+        lines = block.splitlines()
+        header_lines = lines[:2]
+        rows = lines[2:]
+
+        header_text = "\n".join(header_lines)
+        if not self._fits(headers, header_text):
+            return self._hard_split(headers, block)
+
+        chunks: list[str] = []
+        current = list(header_lines)
+
+        for row in rows:
+            candidate = "\n".join(current + [row])
+            if self._fits(headers, candidate):
+                current.append(row)
+                continue
+
+            if len(current) > len(header_lines):
+                chunks.append("\n".join(current))
+
+            row_with_header = "\n".join(header_lines + [row])
+            if self._fits(headers, row_with_header):
+                current = list(header_lines) + [row]
+            else:
+                chunks.extend(self._hard_split(headers, row_with_header))
+                current = list(header_lines)
+
+        if len(current) > len(header_lines):
+            chunks.append("\n".join(current))
+
+        return chunks or [block]
+
+    def _split_code_block(self, headers: tuple[str, ...], block: str) -> list[str]:
+        lines = block.splitlines()
+        opening = lines[0]
+        closing = (
+            lines[-1]
+            if len(lines) > 1 and lines[-1].strip().startswith("```")
+            else None
+        )
+        body = lines[1:-1] if closing else lines[1:]
+
+        chunks: list[str] = []
+        current = [opening]
+
+        for line in body:
+            candidate_lines = current + [line]
+            if closing:
+                candidate_lines.append(closing)
+
+            if self._fits(headers, "\n".join(candidate_lines)):
+                current.append(line)
+                continue
+
+            if len(current) > 1:
+                chunk_lines = current + ([closing] if closing else [])
+                chunks.append("\n".join(chunk_lines))
+
+            current = [opening]
+            single_line = [opening, line]
+            if closing:
+                single_line.append(closing)
+
+            if self._fits(headers, "\n".join(single_line)):
+                current.append(line)
+            else:
+                # Очень длинная строка кода: сохраняем fences, но режем строку.
+                chunks.extend(
+                    self._hard_split(headers, "\n".join(single_line))
+                )
+                current = [opening]
+
+        if len(current) > 1:
+            chunk_lines = current + ([closing] if closing else [])
+            chunks.append("\n".join(chunk_lines))
+
+        return chunks or self._hard_split(headers, block)
 
     def _pack(
         self,

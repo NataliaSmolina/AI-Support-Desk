@@ -203,3 +203,48 @@ def test_headers_are_included_in_embedding_text_after_split():
         chunk.embedding_text.startswith("Root → Section\n\n")
         for chunk in chunks
     )
+
+
+def test_long_table_is_split_by_rows_with_repeated_header():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=12)
+    content = (
+        "# T\n"
+        "| a | b |\n"
+        "|---|---|\n"
+        "| 1 | 1 |\n"
+        "| 2 | 2 |\n"
+    )
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert len(chunks) == 2
+    assert all(chunk.text.startswith("| a | b |\n|---|") for chunk in chunks)
+    assert "| 1 | 1 |" in chunks[0].text
+    assert "| 2 | 2 |" in chunks[1].text
+    assert all(counter.count(chunk.embedding_text) <= 12 for chunk in chunks)
+
+
+def test_long_code_block_is_split_with_fences_preserved():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=4)
+    content = (
+        "# Code\n"
+        "```python\n"
+        "print(1)\n"
+        "print(2)\n"
+        "print(3)\n"
+        "```\n"
+    )
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert len(chunks) == 3
+    for chunk in chunks:
+        lines = chunk.text.splitlines()
+        assert lines[0] == "```python"
+        assert lines[-1] == "```"
+    assert "print(1)" in chunks[0].text
+    assert "print(2)" in chunks[1].text
+    assert "print(3)" in chunks[2].text
+    assert all(counter.count(chunk.embedding_text) <= 4 for chunk in chunks)
