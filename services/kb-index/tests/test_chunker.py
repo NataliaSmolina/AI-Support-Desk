@@ -3,9 +3,14 @@ from kb_index.chunker import MarkdownHeaderChunker
 from kb_index.models import Document
 
 
+class WordCounter:
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
 @pytest.fixture
 def chunker() -> MarkdownHeaderChunker:
-    return MarkdownHeaderChunker()
+    return MarkdownHeaderChunker(WordCounter(), max_tokens=1000)
 
 
 def make_doc(content: str, source_file: str = "kb/test.md") -> Document:
@@ -130,3 +135,71 @@ def test_content_hash_includes_source_file(chunker):
     second = chunker.chunk(make_doc("# A\nSame text", source_file="kb/second.md"))[0]
 
     assert first.content_hash != second.content_hash
+
+
+def test_large_section_is_split_by_paragraphs():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=6)
+    content = (
+        "# Policy\n"
+        "First short sentence.\n"
+        "\n"
+        "Second short sentence."
+    )
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert [chunk.text for chunk in chunks] == [
+        "First short sentence.",
+        "Second short sentence.",
+    ]
+    assert all(chunk.headers == ("Policy",) for chunk in chunks)
+    assert all(counter.count(chunk.embedding_text) <= 6 for chunk in chunks)
+
+
+def test_large_paragraph_is_split_by_sentences():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=5)
+    content = "# Policy\nFirst sentence. Second sentence. Third sentence."
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert [chunk.text for chunk in chunks] == [
+        "First sentence. Second sentence.",
+        "Third sentence.",
+    ]
+    assert all(counter.count(chunk.embedding_text) <= 5 for chunk in chunks)
+
+
+def test_long_sentence_is_split_by_tokens_and_text_is_preserved():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=4)
+    content = "# Policy\none two three four five six."
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert len(chunks) > 1
+    assert all(counter.count(chunk.embedding_text) <= 4 for chunk in chunks)
+    assert " ".join(chunk.text for chunk in chunks).split() == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six.",
+    ]
+    assert all(chunk.headers == ("Policy",) for chunk in chunks)
+
+
+def test_headers_are_included_in_embedding_text_after_split():
+    counter = WordCounter()
+    chunker = MarkdownHeaderChunker(counter, max_tokens=5)
+    content = "# Root\n## Section\nFirst sentence. Second sentence. Third sentence."
+
+    chunks = chunker.chunk(make_doc(content))
+
+    assert all(chunk.headers == ("Root", "Section") for chunk in chunks)
+    assert all(
+        chunk.embedding_text.startswith("Root → Section\n\n")
+        for chunk in chunks
+    )

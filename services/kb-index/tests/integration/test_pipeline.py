@@ -52,6 +52,11 @@ class _CountingLoader:
         return self.documents
 
 
+class _WordCounter:
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
 @dataclass
 class _PipelineEnv:
     settings: Settings
@@ -121,7 +126,10 @@ async def pipeline_env(tmp_kb_dir: Path, _ensure_containers) -> _PipelineEnv:
 
         pipeline = Pipeline(
             loader=loader,
-            chunker=MarkdownHeaderChunker(),
+            chunker=MarkdownHeaderChunker(
+                tokenizer=_WordCounter(),
+                max_tokens=1000,
+            ),
             embedder=counter,
             db_loader=DBLoader(pool),
             embed_batch_size=settings.embed_batch_size,
