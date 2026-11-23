@@ -14,9 +14,10 @@ from ai_clients.llm import LlmClassifier
 from ai_clients.rag import open_rag
 
 from .config import Settings
-from .decision import decide
+from .decision import Decision, Verdict, classification_escalation, decide
 from .tickets import (
     claim_ticket,
+    close_overdue,
     finish_processing,
     mark_failed,
     recover_stuck,
@@ -67,19 +68,39 @@ async def handle_ticket(conn, ticket, worker_id, settings, classifier, rag):
     try:
         result = await classifier.classify(ticket["message"])
 
-        rag_result = await rag.answer_question(ticket["message"])
-
-        if lost.is_set():
-            log.warning("ticket_id=%s: тикет отобран, результат отброшен", tid)
-            return "lost"
-
-        verdict = decide(
-            has_sources=bool(rag_result.source_ids),
-            rag_needs_escalation=rag_result.needs_escalation,
+        routing = dict(
             priority=result.priority.value,
             sentiment=result.sentiment.value,
             wants_human=result.wants_human,
         )
+        verdict = classification_escalation(**routing)
+        answer, source_ids = None, []
+        if verdict is None:
+            if lost.is_set():
+                return "lost"
+            rag_result = await rag.answer_question(ticket["message"])
+            answer, source_ids = rag_result.answer, rag_result.source_ids
+            verdict = decide(
+                has_sources=bool(source_ids),
+                rag_needs_escalation=rag_result.needs_escalation,
+                **routing,
+            )
+            if verdict.decision is Decision.AUTO:
+                # Внутренние инструкции и отчёты не должны попадать в автоответ.
+                if any(
+                    {"internal", "reports"} & set(chunk.source_file.replace("\\", "/").lower().split("/"))
+                    for chunk in rag_result.retrieved_chunks
+                ):
+                    verdict = Verdict(Decision.ESCALATE, "ответ использует внутренние документы")
+                elif not answer or not answer.strip():
+                    verdict = Verdict(Decision.ESCALATE, "RAG не подготовил текст ответа")
+
+        if verdict.decision is Decision.ESCALATE:
+            answer, source_ids = None, []
+
+        if lost.is_set():
+            log.warning("ticket_id=%s: тикет отобран, результат отброшен", tid)
+            return "lost"
 
         saved = finish_processing(
             conn,
@@ -91,8 +112,8 @@ async def handle_ticket(conn, ticket, worker_id, settings, classifier, rag):
             wants_human=result.wants_human,
             decision=verdict.decision.value,
             decision_reason=verdict.reason,
-            answer=rag_result.answer,
-            source_ids=rag_result.source_ids,
+            answer=answer,
+            source_ids=source_ids,
         )
 
         if not saved:
@@ -135,7 +156,7 @@ async def handle_ticket(conn, ticket, worker_id, settings, classifier, rag):
 
         if attempt >= settings.max_attempts:
             mark_failed(conn, tid, worker_id, error)
-            log.error("ticket_id=%s: попытки исчерпаны, статус failed", tid)
+            log.error("ticket_id=%s: попытки исчерпаны, тикет передан оператору", tid)
             return "failed"
 
         release_for_retry(conn, tid, worker_id, error, backoff_s(attempt, settings))
@@ -169,6 +190,9 @@ async def run(settings: Settings) -> None:
             with psycopg.connect(settings.dsn) as conn:
                 while True:
                     if time.monotonic() >= next_recover:
+                        closed = close_overdue(conn)
+                        if closed:
+                            log.info("закрыты по таймауту ожидания клиента: %s", closed)
                         requeued, failed = recover_stuck(
                             conn, settings.max_attempts, settings.lock_timeout_s
                         )

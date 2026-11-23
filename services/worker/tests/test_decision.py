@@ -44,8 +44,8 @@ def test_escalate_when_rag_cannot_prepare_answer():
     assert result.decision is Decision.ESCALATE
 
 
-def test_draft_when_information_is_sufficient():
-    assert verdict().decision is Decision.DRAFT
+def test_auto_when_information_is_sufficient():
+    assert verdict().decision is Decision.AUTO
 
 
 def test_critical_priority_wins_over_other_conditions():
@@ -56,7 +56,3 @@ def test_critical_priority_wins_over_other_conditions():
 
 def test_negative_sentiment_causes_escalation():
     assert verdict(sentiment="negative").decision is Decision.ESCALATE
-
-
-def test_auto_is_not_used():
-    assert verdict().decision is not Decision.AUTO
