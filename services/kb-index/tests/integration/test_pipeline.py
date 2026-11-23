@@ -28,10 +28,12 @@ class _CountingEmbedder:
         self.inner = inner
         self.calls = 0
         self.texts = 0
+        self.inputs: list[str] = []
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
         self.texts += len(texts)
+        self.inputs.extend(texts)
         return await self.inner.embed(texts)
 
 
@@ -50,6 +52,11 @@ class _CountingLoader:
         return self.documents
 
 
+class _WordCounter:
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
 @dataclass
 class _PipelineEnv:
     settings: Settings
@@ -63,6 +70,7 @@ class _PipelineEnv:
     def reset_counters(self) -> None:
         self.counter.calls = 0
         self.counter.texts = 0
+        self.counter.inputs = []
         self.loader.calls = 0
         self.loader.documents = []
 
@@ -118,10 +126,14 @@ async def pipeline_env(tmp_kb_dir: Path, _ensure_containers) -> _PipelineEnv:
 
         pipeline = Pipeline(
             loader=loader,
-            chunker=MarkdownHeaderChunker(),
+            chunker=MarkdownHeaderChunker(
+                tokenizer=_WordCounter(),
+                max_tokens=1000,
+            ),
             embedder=counter,
             db_loader=DBLoader(pool),
             embed_batch_size=settings.embed_batch_size,
+            index_fingerprint="test-fingerprint",
         )
         yield _PipelineEnv(
             settings=settings,
@@ -151,6 +163,11 @@ async def test_pipeline_indexes_all_chunks(pipeline_env: _PipelineEnv):
     assert env.loader.calls == 1
     assert len(env.loader.documents) == 2
     assert env.counter.texts == 3
+    assert "Refunds\n\nMoney is returned within 3 business days." in env.counter.inputs
+    assert (
+        "Refunds → How to request\n\nWrite to support@example.com."
+        in env.counter.inputs
+    )
 
     async with env.pool.acquire() as conn:
         rows = await conn.fetch(
@@ -194,6 +211,38 @@ async def test_pipeline_skips_unchanged_documents(pipeline_env: _PipelineEnv):
     assert len(env.loader.documents) == 2
     assert env.counter.calls == 0
     assert env.counter.texts == 0
+
+    async with env.pool.acquire() as conn:
+        chunk_count = await conn.fetchval("SELECT COUNT(*) FROM public.kb_chunks")
+        document_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM public.kb_documents"
+        )
+    assert chunk_count == 3
+    assert document_count == 2
+
+
+@pytest.mark.asyncio
+async def test_index_config_change_forces_reembedding(pipeline_env: _PipelineEnv):
+    from kb_index.pipeline import Pipeline
+
+    env = pipeline_env
+    await env.pipeline.run()
+
+    env.reset_counters()
+    changed = Pipeline(
+        loader=env.loader,
+        chunker=env.pipeline.chunker,
+        embedder=env.counter,
+        db_loader=env.pipeline.db_loader,
+        embed_batch_size=env.pipeline.embed_batch_size,
+        index_fingerprint="changed-config",
+    )
+    await changed.run()
+
+    assert env.loader.calls == 1
+    assert len(env.loader.documents) == 2
+    assert env.counter.calls > 0
+    assert env.counter.texts == 3
 
     async with env.pool.acquire() as conn:
         chunk_count = await conn.fetchval("SELECT COUNT(*) FROM public.kb_chunks")

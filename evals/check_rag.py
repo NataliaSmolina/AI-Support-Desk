@@ -16,7 +16,7 @@ from pathlib import Path
 import asyncpg
 from pydantic import ValidationError
 
-from ai_clients.config import AISettings, RagSettings
+from ai_clients.config import AISettings, ModelInputLimits, RagSettings
 from ai_clients.rag import RagError, RagResult, open_rag
 from ai_clients.tei import TeiEmbedder
 from evals.check_llm_baseline import generation_mismatches, read_server_version
@@ -31,14 +31,36 @@ async def index_demo(ai: AISettings) -> None:
     from kb_index.database import DBLoader
     from kb_index.embedder import TeiEmbedderAdapter
     from kb_index.loader import LocalDirectoryLoader
-    from kb_index.pipeline import Pipeline
+    from kb_index.pipeline import INDEX_VERSION, Pipeline, build_index_fingerprint
+    from kb_index.tokenization import HfTokenizerCounter, sha256_file
+    from huggingface_hub import hf_hub_download
 
     pool = await asyncpg.create_pool(DEMO_DSN, min_size=1, max_size=2, timeout=10)
     tei = TeiEmbedder(ai.tei_embed_url, ai.request_timeout_s)
     try:
+        limits = ModelInputLimits()
+        info = await tei.get_info()
+        tokenizer_path = await asyncio.to_thread(
+            hf_hub_download, limits.tei_tokenizer, "tokenizer.json",
+            revision=limits.tei_tokenizer_revision,
+            local_files_only=limits.tokenizer_local_files_only,
+        )
+        max_tokens = min(400, limits.tei_max_input_tokens)
+        server_limit = info.get("max_input_length")
+        if isinstance(server_limit, int) and server_limit > 0:
+            max_tokens = min(max_tokens, server_limit)
+        fingerprint = build_index_fingerprint(
+            index_version=INDEX_VERSION,
+            model_id=str(info.get("model_id") or limits.tei_tokenizer),
+            model_sha=info.get("model_sha") if isinstance(info.get("model_sha"), str) else None,
+            tokenizer_sha256=sha256_file(tokenizer_path),
+            chunk_max_tokens=max_tokens,
+        )
         pipeline = Pipeline(
-            LocalDirectoryLoader(str(ROOT / "evals/data/rag_kb")), MarkdownHeaderChunker(),
+            LocalDirectoryLoader(str(ROOT / "evals/data/rag_kb")),
+            MarkdownHeaderChunker(HfTokenizerCounter(tokenizer_path), max_tokens),
             TeiEmbedderAdapter(tei), DBLoader(pool), embed_batch_size=8,
+            index_fingerprint=fingerprint,
         )
         await pipeline.run()
     finally:

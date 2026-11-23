@@ -18,6 +18,11 @@ class Settings(BaseSettings):
 
     embed_batch_size: int = Field(ge=1)
 
+    chunk_max_tokens: int = Field(default=512, ge=1)
+    tokenizer_model: str = "BAAI/bge-m3"
+    tokenizer_path: str | None = None
+    tokenizer_cache_dir: str | None = None
+
     postgres_host: str
     postgres_port: int = Field(ge=1, le=65535)
     postgres_user: str

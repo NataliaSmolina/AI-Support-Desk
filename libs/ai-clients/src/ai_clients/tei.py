@@ -28,6 +28,29 @@ class TeiEmbedder:
             base_url=base_url, timeout=timeout_s
         )
 
+    async def get_info(self) -> dict:
+        """Возвращает метаданные загруженной модели TEI."""
+        try:
+            response = await self._client.get("/info")
+        except httpx.HTTPError as exc:
+            raise EmbeddingServiceError(f"TEI недоступен: {exc!r}") from exc
+
+        if response.status_code != 200:
+            raise EmbeddingServiceError(
+                f"TEI вернул HTTP {response.status_code}: {response.text[:500]}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise EmbeddingServiceError("TEI вернул некорректный JSON") from exc
+
+        if not isinstance(data, dict):
+            raise EmbeddingServiceError(
+                f"TEI /info вернул {type(data).__name__}, ожидался объект"
+            )
+        return data
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Возвращает по одному набору из 1024 чисел на каждый текст, в том же порядке."""
         if not texts:
