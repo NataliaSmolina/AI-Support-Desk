@@ -1,8 +1,12 @@
 """TEI: перевод текста в набор чисел (шаг 2 и kb-index), модель bge-m3."""
 
+import asyncio
 import math
 
 import httpx
+
+from .config import ModelInputLimits
+from .tokenization import InputTooLongError, ModelTokenizer, TokenCounter, TokenizationError
 
 EMBEDDING_DIM = 1024  # столько чисел выдаёт bge-m3 на один текст
 
@@ -12,7 +16,13 @@ class EmbeddingServiceError(RuntimeError):
 
 
 class TeiEmbedder:
-    def __init__(self, base_url: str, timeout_s: float, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, base_url: str, timeout_s: float, http_client: httpx.AsyncClient | None = None,
+                 *, limits: ModelInputLimits | None = None, token_counter: TokenCounter | None = None):
+        self._limits = limits or ModelInputLimits()
+        self._token_counter = token_counter or ModelTokenizer(
+            self._limits.tei_tokenizer, self._limits.tei_tokenizer_revision,
+            local_files_only=self._limits.tokenizer_local_files_only,
+        )
         self._owns_client = http_client is None
         self._client = http_client if http_client is not None else httpx.AsyncClient(
             base_url=base_url, timeout=timeout_s
@@ -25,8 +35,21 @@ class TeiEmbedder:
         if any(not t.strip() for t in texts):
             raise ValueError("embed: в списке есть пустой текст")
 
+        # Весь batch проверяется до первого /embed. Спецтокены BGE входят в лимит.
         try:
-            response = await self._client.post("/embed", json={"inputs": texts})
+            counts = await asyncio.to_thread(lambda: [self._token_counter.count_text(t) for t in texts])
+        except TokenizationError as exc:
+            raise EmbeddingServiceError(str(exc)) from exc
+        for index, count in enumerate(counts, start=1):
+            if count > self._limits.tei_max_input_tokens:
+                raise InputTooLongError(
+                    f"TEI: текст №{index} содержит {count} токенов при лимите "
+                    f"{self._limits.tei_max_input_tokens}. Разделите текст на меньшие фрагменты.",
+                    tokens=count, limit=self._limits.tei_max_input_tokens,
+                )
+
+        try:
+            response = await self._client.post("/embed", json={"inputs": texts, "truncate": False})
         except httpx.HTTPError as exc:
             raise EmbeddingServiceError(f"TEI недоступен: {exc!r}") from exc
 
