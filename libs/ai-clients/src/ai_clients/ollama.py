@@ -1,8 +1,12 @@
 """Общий транспорт для Ollama в Docker и OpenAI-совместимых серверов."""
+import asyncio
 from typing import Any
 
 import httpx
 from openai import APIError, AsyncOpenAI
+
+from .config import ModelInputLimits
+from .tokenization import ContextUsage, ModelTokenizer, TokenCounter, TokenizationError
 
 
 class LLMRequestError(RuntimeError):
@@ -12,7 +16,13 @@ class LLMRequestError(RuntimeError):
 class LLMClient:
     def __init__(self, base_url: str, model: str, timeout_s: float,
                  http_client: httpx.AsyncClient | None = None,
-                 provider: str = "ollama"):
+                 provider: str = "ollama", *, limits: ModelInputLimits | None = None,
+                 token_counter: TokenCounter | None = None):
+        self._limits = limits or ModelInputLimits()
+        self._token_counter = token_counter or ModelTokenizer(
+            self._limits.llm_tokenizer, self._limits.llm_tokenizer_revision,
+            local_files_only=self._limits.tokenizer_local_files_only,
+        )
         self.model = model
         self.provider = provider
         if self.provider not in {"ollama", "openai"}:
@@ -27,8 +37,24 @@ class LLMClient:
             self._openai = AsyncOpenAI(base_url=base_url, api_key="not-used", timeout=timeout_s,
                                        max_retries=0, http_client=http_client)
 
+    async def measure_context(self, messages: list[dict[str, str]], *, max_tokens: int,
+                              schema: dict[str, Any] | None = None) -> ContextUsage:
+        if max_tokens < 1:
+            raise ValueError("max_tokens должен быть положительным")
+        try:
+            count = await asyncio.to_thread(
+                self._token_counter.count_messages, messages,
+                schema=schema if self.provider == "openai" else None,
+            )
+        except TokenizationError as exc:
+            raise LLMRequestError(str(exc)) from exc
+        return ContextUsage(count, max_tokens, self._limits.llm_context_reserve_tokens,
+                            self._limits.llm_context_tokens)
+
     async def chat(self, messages: list[dict[str, str]], *, schema: dict[str, Any] | None = None,
                    schema_name: str = "response", max_tokens: int = 100) -> str:
+        usage = await self.measure_context(messages, max_tokens=max_tokens, schema=schema)
+        usage.ensure_fits()
         try:
             if self.provider == "ollama":
                 assert self._http_client is not None
@@ -36,7 +62,8 @@ class LLMClient:
                     f"{self._base_url}/api/chat",
                     json={"model": self.model, "messages": messages, "stream": False,
                           "think": False, "format": "json" if schema is not None else "json",
-                          "options": {"temperature": 0, "num_predict": max_tokens}},
+                          "options": {"temperature": 0, "num_predict": max_tokens,
+                                      "num_ctx": self._limits.llm_context_tokens}},
                 )
                 response.raise_for_status()
                 content = response.json().get("message", {}).get("content")

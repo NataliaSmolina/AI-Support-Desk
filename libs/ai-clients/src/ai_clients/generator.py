@@ -1,9 +1,13 @@
 """Генерация ответа только по предоставленным фрагментам базы знаний."""
+import logging
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from .llm import _strip_think
 from .ollama import LLMClient, LLMRequestError
+from .tokenization import InputTooLongError
+
+log = logging.getLogger(__name__)
 
 
 class GeneratedAnswer(BaseModel):
@@ -88,19 +92,48 @@ class LlmAnswerGenerator:
         if not documents:
             return GeneratedAnswer(answer=None, source_ids=[], needs_escalation=True)
         ids: set[str] = set()
-        chunks: list[str] = []
         for doc in documents:
             doc_id, text = doc["id"], doc["text"]
             if not doc_id or not text.strip() or doc_id in ids:
                 raise ValueError("Документы должны иметь уникальные непустые id и text")
             ids.add(doc_id)
-            chunks.append(f"[Источник {doc_id}]\n{text}")
-        messages = [
-            {"role": "system", "content": GENERATION_PROMPT},
-            {"role": "user", "content": f"Вопрос: {question}\n\nДокументы:\n" + "\n\n".join(chunks)},
-        ]
+
+        def messages_for(selected: list[dict[str, str]]) -> list[dict[str, str]]:
+            chunks = [f"[Источник {doc['id']}]\n{doc['text']}" for doc in selected]
+            return [
+                {"role": "system", "content": GENERATION_PROMPT},
+                {"role": "user", "content": f"Вопрос: {question}\n\nДокументы:\n" + "\n\n".join(chunks)},
+            ]
+
+        schema = GeneratedAnswer.model_json_schema()
+        selected: list[dict[str, str]] = []
         try:
-            content = await self._client.chat(messages, schema=GeneratedAnswer.model_json_schema(),
+            usage = await self._client.measure_context(messages_for([]), max_tokens=350, schema=schema)
+            usage.ensure_fits()
+            smallest_rejected = None
+            # Порядок кандидатов задаёт вызывающий поиск. Текст не режется; если
+            # большой фрагмент не вошёл, пробуем последующие меньшие фрагменты.
+            for doc in documents:
+                candidate = await self._client.measure_context(
+                    messages_for([*selected, doc]), max_tokens=350, schema=schema,
+                )
+                if candidate.fits:
+                    selected.append(doc)
+                    usage = candidate
+                elif smallest_rejected is None or candidate.input_tokens < smallest_rejected:
+                    smallest_rejected = candidate.input_tokens
+            if not selected:
+                assert smallest_rejected is not None
+                raise InputTooLongError(
+                    "Генератор: ни один документ не помещается в оставшийся контекст LLM. "
+                    f"Нужно минимум {smallest_rejected} входных токенов, доступно {usage.input_limit}. "
+                    "Нужны меньшие фрагменты; это не отсутствие информации в базе знаний.",
+                    tokens=smallest_rejected, limit=usage.input_limit,
+                )
+            if len(selected) != len(documents):
+                log.info("Контекст LLM: передано %s из %s документов, вход %s из %s токенов",
+                         len(selected), len(documents), usage.input_tokens, usage.input_limit)
+            content = await self._client.chat(messages_for(selected), schema=schema,
                                               schema_name="generated_answer", max_tokens=350)
         except LLMRequestError as exc:
             raise GenerationError(str(exc)) from exc
@@ -108,7 +141,8 @@ class LlmAnswerGenerator:
             result = GeneratedAnswer.model_validate_json(_strip_think(content))
         except ValidationError:
             raise GenerationError("Ответ модели не по формату: ожидалась схема GeneratedAnswer") from None
-        if any(source_id not in ids for source_id in result.source_ids):
+        selected_ids = {doc["id"] for doc in selected}
+        if any(source_id not in selected_ids for source_id in result.source_ids):
             raise GenerationError("Модель указала источник, которого нет среди документов")
         if result.answer is None and (result.source_ids or not result.needs_escalation):
             raise GenerationError("Отсутствующий ответ должен требовать эскалации без источников")

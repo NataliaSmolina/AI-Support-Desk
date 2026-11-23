@@ -10,7 +10,7 @@ from ai_clients.llm import (
 )
 from support_worker.config import Settings
 from support_worker.main import backoff_s, handle_ticket
-from support_worker.tickets import claim_ticket, recover_stuck
+from support_worker.tickets import claim_ticket, close_overdue, finish_processing, recover_stuck
 
 TEST_DSN = os.environ.get("TEST_DATABASE_URL")
 pytestmark = [
@@ -25,11 +25,15 @@ OK = Classification(category=Category.DELIVERY, priority=Priority.NORMAL,
                     sentiment=Sentiment.CALM, wants_human=False)
 
 class FakeRag:
+    def __init__(self, source_file="kb/faq/delivery.md"):
+        self.source_file = source_file
+
     async def answer_question(self, question: str):
         return SimpleNamespace(
             answer="Ваш заказ уже отправлен.",
             source_ids=["delivery_policy.pdf"],
             needs_escalation=False,
+            retrieved_chunks=[SimpleNamespace(source_file=self.source_file)],
         )
 
 class FakeClassifier:
@@ -44,15 +48,18 @@ class FakeClassifier:
         return self.result
 
 
-@pytest.fixture
-def conn():
+@pytest.fixture(scope="session")
+def migrated_db():
     with psycopg.connect(TEST_DSN, autocommit=True) as ac:
         assert ac.info.dbname.endswith("_test"), "тесты очищают таблицы: нужна БД *_test"
-        if ac.execute("SELECT to_regclass('public.tickets')").fetchone()[0] is None:
-            for f in sorted(MIGRATIONS.glob("*.sql")):
-                ac.execute(f.read_text(encoding="utf-8"))
+        for f in sorted(MIGRATIONS.glob("*.sql")):
+            ac.execute(f.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def conn(migrated_db):
     with psycopg.connect(TEST_DSN) as c:
-        c.execute("TRUNCATE public.tickets RESTART IDENTITY CASCADE")
+        c.execute("TRUNCATE public.tickets, public.tg_updates RESTART IDENTITY CASCADE")
         c.commit()
         yield c
 
@@ -83,11 +90,17 @@ def state(conn, tid=None):
     ).fetchone()
 
 
-async def run_once(conn, classifier):
+async def run_once(conn, classifier, rag=None):
     ticket = claim_ticket(conn, "w1")
     return await handle_ticket(
-        conn, ticket, "w1", SETTINGS, classifier, FakeRag()
+        conn, ticket, "w1", SETTINGS, classifier, rag if rag is not None else FakeRag()
     )
+
+
+def outbox(conn):
+    return conn.execute(
+        "SELECT ticket_id, action, status FROM public.bot_outbox ORDER BY id"
+    ).fetchall()
 
 
 def test_backoff_grows_and_is_capped():
@@ -111,7 +124,7 @@ def test_claim_skips_ticket_without_client_message_and_backoff(conn):
 
 
 async def test_success_saves_classification(conn):
-    add_ticket(conn)
+    tid = add_ticket(conn)
 
     assert await run_once(conn, FakeClassifier()) == "done"
 
@@ -127,14 +140,15 @@ async def test_success_saves_classification(conn):
         source_ids,
     ) = state(conn)
 
-    assert status == "classified"
+    assert status == "ready"
     assert locked_by is None
     assert category == "delivery"
-    assert decision == "draft"
+    assert decision == "auto"
     assert decision_reason is not None
     assert answer == "Ваш заказ уже отправлен."
     assert source_ids == ["delivery_policy.pdf"]
     assert err is None
+    assert outbox(conn) == [(tid, "send_client_reply", "pending")]
 
 
 async def test_transient_error_returns_ticket_to_queue_with_backoff(conn):
@@ -144,15 +158,32 @@ async def test_transient_error_returns_ticket_to_queue_with_backoff(conn):
     assert (status, attempts, locked_by) == ("new", 1, None)
     assert "ClassificationError" in err
     assert claim_ticket(conn, "w2") is None  # задержка перед повтором ещё не прошла
+    assert outbox(conn) == []
+
+
+async def test_request_for_human_is_saved_without_rag(conn):
+    class UnavailableRag:
+        async def answer_question(self, question: str):
+            pytest.fail("RAG must not run when the client asks for an operator")
+
+    tid = add_ticket(conn)
+    classifier = FakeClassifier(result=OK.model_copy(update={"wants_human": True}))
+    assert await run_once(conn, classifier, UnavailableRag()) == "done"
+    status, attempts, error, _, _, decision, _, answer, sources = state(conn)
+    assert (status, attempts, error, decision, answer, sources) == (
+        "waiting_operator", 1, None, "escalate", None, [],
+    )
+    assert outbox(conn) == [(tid, "notify_operator", "pending")]
 
 
 async def test_ticket_fails_after_last_attempt(conn):
-    add_ticket(conn, attempts=2)
+    tid = add_ticket(conn, attempts=2)
     assert await run_once(conn, FakeClassifier(error=RuntimeError("снова"))) == "failed"
 
     result = state(conn)
-    assert result[0] == "failed"
+    assert result[0] == "waiting_operator"
     assert result[5] == "escalate"
+    assert outbox(conn) == [(tid, "notify_operator", "pending")]
 
 
 async def test_permanent_error_fails_immediately(conn):
@@ -174,6 +205,7 @@ async def test_result_discarded_if_ticket_was_taken_over(conn):
     assert result[0] == "processing"
     assert result[3] == "w2"
     assert result[4] is None
+    assert outbox(conn) == []
 
 
 async def test_heartbeat_refreshes_lock_during_long_processing(conn):
@@ -206,5 +238,111 @@ def test_recover_requeues_stale_and_fails_exhausted(conn):
 
     assert recover_stuck(conn, max_attempts=3, lock_timeout_s=300) == ([retry], [exhausted])
     assert state(conn, retry)[0] == "new"
-    assert state(conn, exhausted)[0] == "failed" and state(conn, exhausted)[5] == "escalate"
+    assert state(conn, exhausted)[0] == "waiting_operator" and state(conn, exhausted)[5] == "escalate"
     assert state(conn, alive)[0] == "processing"
+    assert outbox(conn) == [(exhausted, "notify_operator", "pending")]
+
+
+async def test_reprocessing_does_not_enqueue_duplicate_card(conn):
+    tid = add_ticket(conn)
+    assert await run_once(conn, FakeClassifier()) == "done"
+    conn.execute("UPDATE public.bot_outbox SET status = 'sent' WHERE ticket_id = %s", (tid,))
+    conn.execute("UPDATE public.tickets SET status = 'new' WHERE id = %s", (tid,))
+    conn.commit()
+
+    assert await run_once(conn, FakeClassifier()) == "done"
+    assert outbox(conn) == [(tid, "send_client_reply", "sent")]
+
+
+def test_outbox_error_rolls_back_ticket_result(conn):
+    tid = add_ticket(conn)
+    claim_ticket(conn, "w1")
+    # Имитируем ошибку записи в очередь и проверяем, что результат тикета тоже откатился.
+    conn.execute("ALTER TABLE public.bot_outbox ADD CHECK (action <> 'send_client_reply')")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        finish_processing(
+            conn, tid, "w1", category="delivery", priority="normal", sentiment="calm",
+            wants_human=False, decision="auto", decision_reason="есть источники",
+            answer="Ответ", source_ids=["delivery_policy.pdf"],
+        )
+    conn.rollback()
+
+    assert state(conn, tid)[0] == "processing"
+    assert state(conn, tid)[5] is None
+    assert outbox(conn) == []
+
+
+async def test_internal_context_goes_to_operator(conn):
+    tid = add_ticket(conn)
+    assert await run_once(conn, FakeClassifier(), FakeRag("kb/policies/internal/templates.md")) == "done"
+    assert state(conn, tid)[0] == "waiting_operator"
+    assert state(conn, tid)[7] is None
+    assert outbox(conn) == [(tid, "notify_operator", "pending")]
+
+
+def confirm_auto(conn, tid):
+    outbox_id = conn.execute(
+        "UPDATE public.bot_outbox SET status = 'sending' "
+        "WHERE ticket_id = %s AND status = 'pending' RETURNING id", (tid,),
+    ).fetchone()[0]
+    assert conn.execute("SELECT public.confirm_auto_reply(%s, 1, 100)", (outbox_id,)).fetchone()[0]
+    assert not conn.execute("SELECT public.confirm_auto_reply(%s, 1, 100)", (outbox_id,)).fetchone()[0]
+
+
+def remaining_hours(conn, tid, author):
+    return conn.execute(
+        "SELECT EXTRACT(EPOCH FROM (t.close_after - m.created_at)) / 3600 "
+        "FROM public.tickets t JOIN public.messages m ON m.ticket_id = t.id "
+        "WHERE t.id = %s AND m.author = %s ORDER BY m.id DESC LIMIT 1", (tid, author),
+    ).fetchone()[0]
+
+
+async def test_auto_reply_waits_for_delivery_and_closes_after_one_hour(conn):
+    tid = add_ticket(conn)
+    assert await run_once(conn, FakeClassifier()) == "done"
+    assert close_overdue(conn) == []
+    confirm_auto(conn, tid)
+    assert remaining_hours(conn, tid, "bot") == 1
+    assert state(conn, tid)[0] == "waiting_client"
+    assert close_overdue(conn) == []
+
+    conn.execute("UPDATE public.tickets SET close_after = NOW() - interval '1 second' WHERE id = %s", (tid,))
+    assert close_overdue(conn) == [tid]
+    assert state(conn, tid)[0] == "closed"
+
+
+async def test_llm_followup_can_escalate_same_ticket(conn):
+    tid = add_ticket(conn)
+    assert await run_once(conn, FakeClassifier()) == "done"
+    confirm_auto(conn, tid)
+    result = conn.execute("SELECT public.add_ticket_followup(%s, 11, 1, 'Позовите оператора')", (tid,))
+    assert result.fetchone()[0] == "accepted"
+    assert conn.execute(
+        "SELECT public.add_ticket_followup(%s, 11, 1, 'Позовите оператора')", (tid,),
+    ).fetchone()[0] == "duplicate"
+    ticket = claim_ticket(conn, "w1")
+    assert (ticket["id"], ticket["message"], ticket["attempts"]) == (tid, "Позовите оператора", 1)
+    classifier = FakeClassifier(result=OK.model_copy(update={"wants_human": True}))
+    assert await handle_ticket(conn, ticket, "w1", SETTINGS, classifier, FakeRag()) == "done"
+    assert state(conn, tid)[0] == "waiting_operator"
+    assert outbox(conn) == [(tid, "send_client_reply", "sent"), (tid, "notify_operator", "pending")]
+
+
+def test_operator_followup_returns_to_assigned_operator(conn):
+    tid = add_ticket(conn, status="waiting_operator", decision="escalate")
+    assert conn.execute("SELECT public.claim_operator_ticket(%s, 7)", (tid,)).fetchone()[0]
+    assert not conn.execute("SELECT public.claim_operator_ticket(%s, 8)", (tid,)).fetchone()[0]
+    assert not conn.execute("SELECT public.confirm_operator_reply(%s, 1, 8, 'Ответ')", (tid,)).fetchone()[0]
+    assert conn.execute("SELECT public.confirm_operator_reply(%s, 1, 7, 'Ответ')", (tid,)).fetchone()[0]
+    assert remaining_hours(conn, tid, "operator") == 12
+
+    assert conn.execute("SELECT public.add_ticket_followup(%s, 12, 1, 'Уточнение')", (tid,)).fetchone()[0] == "accepted"
+    assert state(conn, tid)[0] == "operator_processing"
+    assert close_overdue(conn) == []
+    assert outbox(conn) == [(tid, "notify_operator", "pending")]
+    assert not conn.execute("SELECT public.confirm_operator_reply(%s, 1, 7, 'Ответ')", (tid,)).fetchone()[0]
+    assert conn.execute("SELECT public.confirm_operator_reply(%s, 2, 7, 'Новый ответ')", (tid,)).fetchone()[0]
+    assert remaining_hours(conn, tid, "operator") == 12
+    conn.execute("UPDATE public.tickets SET close_after = NOW() - interval '1 second' WHERE id = %s", (tid,))
+    assert conn.execute("SELECT public.add_ticket_followup(%s, 13, 1, 'Поздний ответ')", (tid,)).fetchone()[0] == "unavailable"
+    assert close_overdue(conn) == [tid]

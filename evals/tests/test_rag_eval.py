@@ -3,23 +3,38 @@ from ai_clients.retrieval import RetrievedChunk
 from evals.check_rag import check_result, error_types
 
 
-async def test_demo_indexing_is_compatible_with_kb_index(monkeypatch):
+async def test_demo_indexing_is_compatible_with_kb_index(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock
 
     from evals import check_rag
     from ai_clients.config import AISettings
     from kb_index.pipeline import Pipeline
+    from tokenizers import Tokenizer, models
+    import huggingface_hub
 
     pool = AsyncMock()
     monkeypatch.setattr(check_rag.asyncpg, "create_pool", AsyncMock(return_value=pool))
     tei = AsyncMock()
+    tei.get_info.return_value = {"model_id": "BAAI/bge-m3", "model_sha": "tei-revision", "max_input_length": 128}
     monkeypatch.setattr(check_rag, "TeiEmbedder", lambda *args: tei)
+    tokenizer_path = tmp_path / "tokenizer.json"
+    Tokenizer(models.WordLevel({"[UNK]": 0}, unk_token="[UNK]")).save(str(tokenizer_path))
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *args, **kwargs: str(tokenizer_path))
+    pipelines = []
+    class RecordingPipeline(Pipeline):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            pipelines.append(self)
+    monkeypatch.setattr("kb_index.pipeline.Pipeline", RecordingPipeline)
     run = AsyncMock()
     monkeypatch.setattr(Pipeline, "run", run)
 
     # Настоящие Pipeline и DBLoader должны собраться без несовместимых параметров.
     await check_rag.index_demo(AISettings(_env_file=None))
     run.assert_awaited_once()
+    assert pipelines[0].chunker.max_tokens == 128
+    assert pipelines[0].chunker.tokenizer.count("текст") == 1
+    assert len(pipelines[0].index_fingerprint) == 64
     pool.close.assert_awaited_once()
     tei.aclose.assert_awaited_once()
 

@@ -1,0 +1,26 @@
+services:
+  worker:
+    image: support-desk-worker
+    build:
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?Укажите адрес PostgreSQL в .env}"
+      TEI_EMBED_URL: http://tei:80
+      LLM_PROVIDER: ollama
+      LLM_BASE_URL: http://llm:11434/v1
+      LLM_MODEL: "${LLM_MODEL:-qwen3:8b}"
+      REQUEST_TIMEOUT_S: "${REQUEST_TIMEOUT_S:-180}"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        python -m ai_clients.tokenization || python -m ai_clients.tokenization --download
+        exec support-worker
+    volumes:
+      - tokenizer-cache:/home/app/.cache/huggingface
+
+volumes:
+  tokenizer-cache:

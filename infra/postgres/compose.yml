@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}
       POSTGRES_DB: ${POSTGRES_DB:-supportdesk}
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${POSTGRES_PUBLISHED_PORT:-5433}:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
@@ -14,6 +14,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  migrate:
+    image: pgvector/pgvector:pg17
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-supportdesk}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}
+      PGDATABASE: ${POSTGRES_DB:-supportdesk}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        {
+          printf '%s\n' 'SELECT pg_advisory_lock(147481, 1);'
+          for migration in /migrations/*.sql; do
+            printf '\\i %s\n' "$$migration"
+          done
+        } | psql -X -v ON_ERROR_STOP=1
 
 volumes:
   pg-data:

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,3 +31,24 @@ class RagSettings(BaseSettings):
     rag_top_k: int = Field(default=5, ge=1, le=100)
     rag_max_distance: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
     rag_search_timeout_s: float = Field(default=10, gt=0, allow_inf_nan=False)
+
+
+class ModelInputLimits(BaseSettings):
+    """Ограничения клиентов моделей; действуют и у существующих вызывающих сервисов."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    tokenizer_local_files_only: bool = False
+    tei_max_input_tokens: int = Field(default=1024, ge=1)
+    tei_tokenizer: str = Field(default="BAAI/bge-m3", min_length=1)
+    tei_tokenizer_revision: str = "5617a9f61b028005a4858fdac845db406aefb181"
+    llm_context_tokens: int = Field(default=4096, ge=1)
+    llm_context_reserve_tokens: int = Field(default=256, ge=0)
+    llm_tokenizer: str = Field(default="Qwen/Qwen3-8B", min_length=1)
+    llm_tokenizer_revision: str = "b968826d9c46dd6066d109eabc6255188de91218"
+
+    @model_validator(mode="after")
+    def reserve_fits_context(self):
+        if self.llm_context_reserve_tokens >= self.llm_context_tokens:
+            raise ValueError("LLM_CONTEXT_RESERVE_TOKENS должен быть меньше LLM_CONTEXT_TOKENS")
+        return self

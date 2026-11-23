@@ -1,7 +1,7 @@
 
 BEGIN;
 
-CREATE TABLE public.messages (
+CREATE TABLE IF NOT EXISTS public.messages (
     id BIGSERIAL PRIMARY KEY,
     ticket_id BIGINT NOT NULL REFERENCES public.tickets(id),
     author VARCHAR(20) NOT NULL
@@ -10,10 +10,10 @@ CREATE TABLE public.messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_messages_ticket_id
+CREATE INDEX IF NOT EXISTS idx_messages_ticket_id
     ON public.messages(ticket_id);
 
-CREATE TABLE public.tg_updates (
+CREATE TABLE IF NOT EXISTS public.tg_updates (
     update_id BIGINT PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

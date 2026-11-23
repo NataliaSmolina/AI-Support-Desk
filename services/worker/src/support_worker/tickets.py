@@ -8,7 +8,7 @@ WITH picked AS (
     SELECT t.id
     FROM public.tickets AS t
     WHERE t.status = 'new'
-      AND t.next_attempt_at <= NOW()
+      AND t.next_attempt_at <= statement_timestamp()
       AND EXISTS (
           SELECT 1 FROM public.messages AS m
           WHERE m.ticket_id = t.id AND m.author = 'client'
@@ -27,7 +27,7 @@ WITH picked AS (
 SELECT c.id, c.chat_id, c.attempts,
        (SELECT m.text FROM public.messages AS m
         WHERE m.ticket_id = c.id AND m.author = 'client'
-        ORDER BY m.created_at, m.id LIMIT 1) AS message
+        ORDER BY m.id DESC LIMIT 1) AS message
 FROM claimed AS c
 """
 
@@ -51,6 +51,16 @@ def touch_ticket(conn: psycopg.Connection, ticket_id: int, worker_id: str) -> bo
     return cur.rowcount == 1
 
 
+def _enqueue(conn: psycopg.Connection, ticket_ids: list[int], action: str) -> None:
+    if ticket_ids:
+        conn.execute(
+            "INSERT INTO public.bot_outbox (ticket_id, reply_round, action) "
+            "SELECT id, reply_round, %s FROM public.tickets WHERE id = ANY(%s) "
+            "ON CONFLICT (ticket_id, reply_round, action) DO NOTHING",
+            (action, ticket_ids),
+        )
+
+
 def finish_processing(
     conn: psycopg.Connection,
     ticket_id: int,
@@ -65,10 +75,13 @@ def finish_processing(
     answer: str | None,
     source_ids: list[str],
 ) -> bool:
-    """Сохраняет полный результат обработки тикета."""
+    """Сохраняет результат обработки и ставит задачу для бота."""
+    auto = decision == "auto"
+    if auto and (not answer or not answer.strip() or not source_ids):
+        raise ValueError("для автоответа нужны текст и источники")
     cur = conn.execute(
         "UPDATE public.tickets SET "
-        "status = 'classified', "
+        "status = %(status)s, "
         "category = %(category)s, "
         "priority = %(priority)s, "
         "sentiment = %(sentiment)s, "
@@ -77,11 +90,12 @@ def finish_processing(
         "decision_reason = %(decision_reason)s, "
         "answer = %(answer)s, "
         "source_ids = %(source_ids)s, "
-        "locked_at = NULL, locked_by = NULL, last_error = NULL "
+        "close_after = NULL, locked_at = NULL, locked_by = NULL, last_error = NULL "
         f"WHERE {_OWNED}",
         {
             "id": ticket_id,
             "worker": worker_id,
+            "status": "ready" if auto else "waiting_operator",
             "category": category,
             "priority": priority,
             "sentiment": sentiment,
@@ -92,8 +106,11 @@ def finish_processing(
             "source_ids": source_ids,
         },
     )
+    saved = cur.rowcount == 1
+    if saved:
+        _enqueue(conn, [ticket_id], "send_client_reply" if auto else "notify_operator")
     conn.commit()
-    return cur.rowcount == 1
+    return saved
 
 
 def release_for_retry(
@@ -118,12 +135,16 @@ def release_for_retry(
 def mark_failed(conn: psycopg.Connection, ticket_id: int, worker_id: str, error: str) -> bool:
     """Попытки исчерпаны или ошибка постоянная: тикет уходит оператору"""
     cur = conn.execute(
-        "UPDATE public.tickets SET status = 'failed', decision = 'escalate', "
+        "UPDATE public.tickets SET status = 'waiting_operator', decision = 'escalate', "
+        "decision_reason = 'не удалось обработать обращение', answer = NULL, source_ids = '{}', "
         f"last_error = %(error)s, locked_at = NULL, locked_by = NULL WHERE {_OWNED}",
         {"id": ticket_id, "worker": worker_id, "error": error},
     )
+    saved = cur.rowcount == 1
+    if saved:
+        _enqueue(conn, [ticket_id], "notify_operator")
     conn.commit()
-    return cur.rowcount == 1
+    return saved
 
 
 def recover_stuck(
@@ -143,11 +164,27 @@ def recover_stuck(
         params,
     ).fetchall()
     failed = conn.execute(
-        "UPDATE public.tickets SET status = 'failed', decision = 'escalate', "
+        "UPDATE public.tickets SET status = 'waiting_operator', decision = 'escalate', "
+        "decision_reason = 'не удалось обработать обращение', answer = NULL, source_ids = '{}', "
         "locked_at = NULL, locked_by = NULL, "
         "last_error = 'worker перестал отвечать, попытки исчерпаны' "
         f"WHERE {stale} AND attempts >= %(max)s RETURNING id",
         params,
     ).fetchall()
+    failed_ids = [r[0] for r in failed]
+    _enqueue(conn, failed_ids, "notify_operator")
     conn.commit()
-    return [r[0] for r in requeued], [r[0] for r in failed]
+    return [r[0] for r in requeued], failed_ids
+
+
+def close_overdue(conn: psycopg.Connection) -> list[int]:
+    """Закрывает обращения, по которым истёк срок ожидания клиента."""
+    rows = conn.execute(
+        "WITH due AS ("
+        "SELECT id FROM public.tickets WHERE status = 'waiting_client' AND close_after <= NOW() "
+        "ORDER BY close_after, id LIMIT 100 FOR UPDATE SKIP LOCKED"
+        ") UPDATE public.tickets t SET status = 'closed', closed_at = NOW(), close_after = NULL "
+        "FROM due WHERE t.id = due.id RETURNING t.id"
+    ).fetchall()
+    conn.commit()
+    return [row[0] for row in rows]
