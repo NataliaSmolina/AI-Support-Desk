@@ -2,14 +2,14 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE public.kb_documents (
+CREATE TABLE IF NOT EXISTS public.kb_documents (
     source_file   TEXT PRIMARY KEY,
     doc_hash      TEXT NOT NULL,
     index_version TEXT NOT NULL,
     indexed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE public.kb_chunks (
+CREATE TABLE IF NOT EXISTS public.kb_chunks (
     source_file  TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     headers      JSONB NOT NULL,
