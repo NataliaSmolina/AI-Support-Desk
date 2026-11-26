@@ -38,8 +38,9 @@ OPERATOR_REQUESTED = "Передали ваш вопрос оператору."
 OPERATOR_HANDOFF_FAILED = "Вопрос сохранен. Передача оператору не подтверждена."
 
 
-def card(question: str, ticket_id: int, *, requested_operator: bool) -> str:
-    reason = "Клиент попросил оператора" if requested_operator else "Требуется ответ оператора"
+def card(question: str, ticket_id: int, *, requested_operator: bool = False, reason: str | None = None) -> str:
+    if not reason:
+        reason = "Клиент попросил оператора" if requested_operator else "Требуется ответ оператора"
     return f"Обращение #{ticket_id}\n{reason}\n\nВопрос клиента:\n{question[:1800]}"
 
 
