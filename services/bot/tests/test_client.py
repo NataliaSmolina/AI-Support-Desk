@@ -10,7 +10,7 @@ from support_bot.handlers.client import PRIVATE_CHAT, help_command, not_text, qu
 
 
 async def test_start_answers_with_greeting():
-    # Вместо настоящего сообщения из Telegram — заглушка
+    # /start один раз отправляет клиенту текст приветствия
     message = AsyncMock()
 
     await start(message)
@@ -19,7 +19,7 @@ async def test_start_answers_with_greeting():
 
 
 async def test_start_logs_user_id(caplog):
-    # caplog — встроенная в pytest «ловушка» для логов
+    # После /start в журнале появляется Telegram ID клиента
     caplog.set_level("INFO")
     message = AsyncMock()
     message.from_user.id = 123456
@@ -30,6 +30,7 @@ async def test_start_logs_user_id(caplog):
 
 
 async def test_help_answers_with_help():
+    # /help один раз отправляет инструкцию по работе с ботом
     message = AsyncMock()
 
     await help_command(message)
@@ -37,25 +38,62 @@ async def test_help_answers_with_help():
     message.answer.assert_awaited_once_with(texts.HELP)
 
 
-async def test_question_sends_card_to_operators():
+async def test_question_sends_card_to_operators(monkeypatch):
+    # Сохраненный вопрос приходит в настроенную тему с кнопкой ответа на тикет №15
+    monkeypatch.setattr(db, "save_question", AsyncMock(return_value=15))
     message = AsyncMock()
     message.text = "Где мой заказ?"
+    message.caption = None
     message.chat.id = 111
     bot = AsyncMock()
     settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
 
-    await question(message, bot, settings)
+    await question(message, bot, settings, pool=object(), event_update=SimpleNamespace(update_id=1))
 
-    # Достаём аргументы, с которыми бот отправил карточку
+    # Достаем аргументы, с которыми бот отправил карточку
     sent = bot.send_message.await_args.kwargs
     assert sent["chat_id"] == -100222
     assert sent["message_thread_id"] == 5
     assert "Где мой заказ?" in sent["text"]
     assert sent["reply_markup"] is not None
+    button = sent["reply_markup"].inline_keyboard[0][0]
+    assert button.text == "Ответить"
+    assert button.callback_data == "reply:15"
+
+
+async def test_question_without_db_is_not_accepted():
+    # Без подключения к базе клиент получает сообщение об ошибке, карточка не отправляется
+    message = AsyncMock()
+    message.text = "Где мой заказ?"
+    message.caption = None
+    bot = AsyncMock()
+    settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
+
+    await question(message, bot, settings)
+
+    message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
+    bot.send_message.assert_not_awaited()
+
+
+async def test_question_without_update_is_not_accepted(monkeypatch):
+    # Без события Telegram бот сообщает об ошибке и не вызывает сохранение или отправку карточки
+    save = AsyncMock()
+    monkeypatch.setattr(db, "save_question", save)
+    message = AsyncMock()
+    message.text = "Где мой заказ?"
+    message.caption = None
+    bot = AsyncMock()
+    settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
+
+    await question(message, bot, settings, pool=object())
+
+    message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
+    save.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
 
 
 async def test_question_db_error_tells_client(monkeypatch):
-    # Подменяем запись в базу: она падает, как при недоступном сервере
+    # Ошибка записи в базу приводит к сообщению SAVE_FAILED
     monkeypatch.setattr(db, "save_question", AsyncMock(side_effect=psycopg.OperationalError))
     message = AsyncMock()
     message.text = "Где мой заказ?"
@@ -63,11 +101,11 @@ async def test_question_db_error_tells_client(monkeypatch):
 
     await question(message, AsyncMock(), settings, pool=object(), event_update=SimpleNamespace(update_id=1))
 
-    # Клиенту только сообщение об ошибке, без «Вопрос получен»
     message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
 
 
 async def test_status_without_db():
+    # /status без базы сообщает, что список обращений недоступен
     message = AsyncMock()
 
     await status_command(message, pool=None)
@@ -76,17 +114,17 @@ async def test_status_without_db():
 
 
 def test_status_list_shows_number_time_and_status():
-    # 10:31 по UTC – это 13:31 по Москве
+    # /status переводит время в московское, показывает понятный статус и выделяет номер жирным
     created_at = datetime(2026, 10, 31, 10, 31, tzinfo=UTC)
 
     result = texts.status_list([(15, "processing", created_at)]).as_kwargs()
 
     assert "Обращение #15\n31.10.26, 13:31\nСтатус: В обработке" in result["text"]
-    # Номер выделен жирным
     assert result["entities"][0].type == "bold"
 
 
 async def test_not_text_asks_for_text():
+    # Обработчик сообщения без текста просит клиента описать вопрос словами
     message = AsyncMock()
 
     await not_text(message)
@@ -95,7 +133,7 @@ async def test_not_text_asks_for_text():
 
 
 def test_not_text_filter():
-    # Тот же фильтр, что в хендлере not_text
+    # Фильтр ~F.text срабатывает для фото без текста и пропускает текстовый вопрос
     no_text = ~F.text
 
     photo = SimpleNamespace(text=None)
@@ -106,6 +144,7 @@ def test_not_text_filter():
 
 
 def test_client_handlers_only_in_private_chat():
+    # Фильтр клиентских обработчиков принимает личные сообщения и исключает групповые
     private = SimpleNamespace(chat=SimpleNamespace(type="private"))
     group = SimpleNamespace(chat=SimpleNamespace(type="group"))
 
