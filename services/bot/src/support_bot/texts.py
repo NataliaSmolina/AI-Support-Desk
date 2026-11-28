@@ -19,10 +19,8 @@ HELP = (
 
 ONLY_TEXT = "Пока я понимаю только текст. Опишите, пожалуйста, вопрос словами."
 
-def accepted(ticket_id: int | None) -> str:
-    """Ответ на вопрос клиента: подтверждаем получение, ничего не обещаем. None – база не подключена."""
-    if ticket_id is None:
-        return "Вопрос получен. Ответ придёт в этот чат."
+def accepted(ticket_id: int) -> str:
+    """Подтверждение приема сохраненного обращения."""
     return f"Вопрос получен, номер обращения #{ticket_id}. Ответ придёт в этот чат."
 
 # База недоступна: вопрос не сохранился, клиент должен знать, что ждать нечего
@@ -34,12 +32,10 @@ ATTACHMENT_IGNORED = "⚠️ Вложение (фото или файл) не о
 # --- Группа операторов ---
 
 BUTTON_REPLY = "Ответить"
-OPERATOR_REQUESTED = "Передали ваш вопрос оператору."
-OPERATOR_HANDOFF_FAILED = "Вопрос сохранен. Передача оператору не подтверждена."
 
 
-def card(question: str, ticket_id: int, *, requested_operator: bool) -> str:
-    reason = "Клиент попросил оператора" if requested_operator else "Требуется ответ оператора"
+def card(question: str, ticket_id: int, *, reason: str | None = None) -> str:
+    reason = reason or "Требуется ответ оператора"
     return f"Обращение #{ticket_id}\n{reason}\n\nВопрос клиента:\n{question[:1800]}"
 
 
@@ -57,8 +53,10 @@ REPLY_PROMPT_PREFIX = "Напишите ответ на обращение #"
 REPLY_LINK_INVALID = "Неверная ссылка на обращение."
 REPLY_OPEN_FROM_CARD = "Снова нажмите «Ответить» на карточке обращения в группе."
 REPLY_ALREADY_OPEN = "Сначала отправьте текущий ответ или отмените его через /cancel."
+REPLY_TICKET_TAKEN = "Обращение уже взял другой оператор."
+REPLY_TICKET_INACTIVE = "Обращение больше не ожидает вашего ответа."
 REPLY_NOT_OPEN = "Нет активного ответа. Откройте обращение из карточки."
-REPLY_CANCELLED = "Ответ отменен."
+REPLY_CANCELLED = "Ввод ответа отменен. Обращение остается за вами."
 REPLY_USE_PROMPT = "Ответьте на подсказку бота или отправьте /cancel."
 REPLY_TEXT_REQUIRED = "Отправьте текст в ответ на подсказку бота."
 
@@ -113,10 +111,15 @@ def ticket_details(ticket: dict, messages: list[dict]) -> Text:
 
 # --- Команда /status ---
 
-# Статусы из базы – так их видит клиент. Значения ставит worker
+# Подписи этапов обработки для клиента
 STATUS_NAMES = {
     "new": "Новое",
     "processing": "В обработке",
+    "ready": "Ответ готовится к отправке",
+    "waiting_operator": "Ожидает оператора",
+    "operator_processing": "В работе у оператора",
+    "waiting_client": "Ожидаем ответа клиента",
+    "closed": "Закрыто",
     "classified": "Разобрано",
     "failed": "Передано оператору",
 }

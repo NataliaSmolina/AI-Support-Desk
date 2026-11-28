@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import BotCommand
 
-from support_bot import db, texts
+from support_bot import db, outbox, texts
 from support_bot.config import BotSettings
 from support_bot.handlers import client, operator, reply
 
@@ -21,7 +21,7 @@ COMMANDS = [
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    # aiogram пишет строку на каждое событие — оставляем от него только ошибки
+    # aiogram пишет строку на каждое событие – оставляем предупреждения и ошибки
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     settings = BotSettings()
 
@@ -40,7 +40,17 @@ async def main() -> None:
         # async with сам закроет соединение с Telegram при остановке
         async with Bot(token=settings.bot_token.get_secret_value()) as bot:
             await bot.set_my_commands(COMMANDS)
-            await dispatcher.start_polling(bot)
+            stop = asyncio.Event()
+            # Обрабатываем очередь параллельно с приемом сообщений Telegram
+            delivery = asyncio.create_task(outbox.run(bot, pool, settings, stop)) if pool is not None else None
+            try:
+                # Оставляем сессию Telegram открытой, пока очередь завершает начатую отправку
+                await dispatcher.start_polling(bot, close_bot_session=False)
+            finally:
+                # Сигнал останавливает цикл после текущей задачи, await дожидается его выхода
+                stop.set()
+                if delivery is not None:
+                    await delivery
     finally:
         # аккуратное закрытие с бд, в тч ctrl + c
         if pool is not None:
