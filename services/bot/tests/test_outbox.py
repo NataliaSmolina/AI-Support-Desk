@@ -1,14 +1,16 @@
+import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import psycopg
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from aiogram.methods import SendMessage
+from pydantic import SecretStr
 
-from support_bot import outbox
+from support_bot import main as bot_main, outbox
 
 
 @pytest.fixture
@@ -168,3 +170,60 @@ async def test_db_failure_after_send_does_not_resend(bot, store, settings):
 
     bot.send_message.assert_awaited_once()
     store.finish.assert_not_awaited()
+
+
+async def test_run_recovers_stale_tasks_and_continues_after_db_error(bot, settings, monkeypatch):
+    # На старте проверяем зависшие отправки, после ошибки БД возвращаемся к обработке
+    pool = object()
+    stop = asyncio.Event()
+    recover = AsyncMock(return_value=0)
+    handled = AsyncMock(side_effect=[psycopg.OperationalError("database unavailable"), True])
+    monkeypatch.setattr(outbox, "mark_stale_unknown", recover)
+    monkeypatch.setattr(outbox, "POLL_INTERVAL_S", 0.001)
+
+    async def process(*args):
+        if await handled(*args):
+            stop.set()
+        return True
+
+    monkeypatch.setattr(outbox, "process_next", process)
+
+    await asyncio.wait_for(outbox.run(bot, pool, settings, stop), timeout=1)
+
+    recover.assert_awaited_once_with(pool, outbox.STALE_SEND_AFTER_S)
+    assert handled.await_count == 2
+
+
+async def test_main_waits_for_outbox_before_closing_connections(bot, monkeypatch):
+    # Запуск поднимает очередь рядом с Telegram, остановка дожидается ее перед закрытием соединений
+    settings = SimpleNamespace(database_url=SecretStr("stub"), bot_token=SecretStr("stub"))
+    pool = SimpleNamespace(close=AsyncMock())
+    session = AsyncMock()
+    session.__aenter__.return_value = bot
+    dispatcher = Mock(start_polling=AsyncMock())
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def poll(*args, **kwargs):
+        await started.wait()
+
+    async def run_queue(bot, pool, settings, stop):
+        started.set()
+        await stop.wait()
+        session.__aexit__.assert_not_awaited()
+        pool.close.assert_not_awaited()
+        stopped.set()
+
+    dispatcher.start_polling.side_effect = poll
+    monkeypatch.setattr(bot_main, "BotSettings", lambda: settings)
+    monkeypatch.setattr(bot_main.db, "open_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(bot_main, "Bot", Mock(return_value=session))
+    monkeypatch.setattr(bot_main, "Dispatcher", Mock(return_value=dispatcher))
+    monkeypatch.setattr(outbox, "run", run_queue)
+
+    await asyncio.wait_for(bot_main.main(), timeout=1)
+
+    assert stopped.is_set()
+    dispatcher.start_polling.assert_awaited_once_with(bot, close_bot_session=False)
+    session.__aexit__.assert_awaited_once()
+    pool.close.assert_awaited_once()

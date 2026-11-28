@@ -76,21 +76,31 @@ async def test_repeated_update_is_skipped(pool):
     assert second is None
 
 
-async def test_client_chat_id_comes_from_ticket(pool):
-    # По номеру тикета находим чат клиента, а для неизвестного номера получаем None
+async def test_operator_ticket_returns_delivery_target(pool):
+    # По номеру тикета получаем чат клиента, текущий раунд и назначение
     ticket_id = await db.save_question(pool, UPDATE_ID, 111, "Где мой заказ?")
 
-    assert await db.client_chat_id(pool, ticket_id) == 111
-    assert await db.client_chat_id(pool, -1) is None
+    assert await db.operator_ticket(pool, ticket_id) == db.OperatorTicket(111, 1, "new", None)
+    assert await db.operator_ticket(pool, -1) is None
 
 
-async def test_operator_reply_is_saved_in_ticket_history(pool):
-    # История одного тикета содержит вопрос с автором client и ответ с автором operator
+async def test_operator_claim_and_confirmation_update_ticket(pool):
+    # Назначение остается за первым оператором, а подтверждение меняет статус и историю
     question = "Где мой заказ?"
     reply = "Заказ '123' в пути."
     ticket_id = await db.save_question(pool, UPDATE_ID, 111, question)
+    await pool.conn.execute("UPDATE tickets SET status = 'waiting_operator' WHERE id = %s", (ticket_id,))
 
-    await db.save_operator_reply(pool, ticket_id, reply)
+    claimed = db.OperatorTicket(111, 1, "operator_processing", 123)
+    assert await db.claim_operator_ticket(pool, ticket_id, 123) == claimed
+    assert await db.claim_operator_ticket(pool, ticket_id, 456) == claimed
+    assert await db.claim_operator_ticket(pool, ticket_id, 123) == claimed
+
+    assert not await db.confirm_operator_reply(pool, ticket_id, 1, 456, reply)
+    assert not await db.confirm_operator_reply(pool, ticket_id, 2, 123, reply)
+    assert await db.confirm_operator_reply(pool, ticket_id, 1, 123, reply)
+    assert not await db.confirm_operator_reply(pool, ticket_id, 1, 123, reply)
+    assert await db.operator_ticket(pool, ticket_id) == db.OperatorTicket(111, 1, "waiting_client", 123)
 
     cur = await pool.conn.execute(
         "SELECT author, text FROM messages WHERE ticket_id = %s ORDER BY id",
@@ -103,7 +113,10 @@ async def test_ticket_details_returns_recent_messages(pool):
     # Получаем данные тикета и пять последних сообщений по порядку, каждое до 300 символов
     ticket_id = await db.save_question(pool, UPDATE_ID, 111, "Первый вопрос")
     for number in range(6):
-        await db.save_operator_reply(pool, ticket_id, f"Ответ {number} " + "x" * 400)
+        await pool.conn.execute(
+            "INSERT INTO messages (ticket_id, author, text) VALUES (%s, 'operator', %s)",
+            (ticket_id, f"Ответ {number} " + "x" * 400),
+        )
 
     ticket, messages = await db.ticket_details(pool, ticket_id)
 

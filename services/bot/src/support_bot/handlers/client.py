@@ -3,15 +3,12 @@
 import logging
 
 import psycopg
-from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, Update
 from psycopg_pool import AsyncConnectionPool
 
 from support_bot import db, texts
-from support_bot.config import BotSettings
-from support_bot.keyboards import reply_keyboard
 
 # Все хендлеры этого файла работают только в личке с ботом, не в группах
 PRIVATE_CHAT = F.chat.type == "private"
@@ -53,8 +50,6 @@ async def status_command(message: Message, pool: AsyncConnectionPool | None = No
 @router.message(F.text | F.caption)
 async def question(
     message: Message,
-    bot: Bot,
-    settings: BotSettings,
     pool: AsyncConnectionPool | None = None,
     event_update: Update | None = None,
 ) -> None:
@@ -78,26 +73,8 @@ async def question(
         return
     logger.info("Тикет %s от chat_id=%s", ticket_id, message.chat.id)
 
-    requested_operator = " ".join(text.casefold().split()) == "позови оператора"
-    handed_off = False
-    if settings.operator_chat_id is not None:
-        # Пока результат Worker не подключен, все обращения направляем оператору.
-        try:
-            await bot.send_message(
-                chat_id=settings.operator_chat_id,
-                message_thread_id=settings.operator_thread_id,
-                text=texts.card(text, ticket_id, requested_operator=requested_operator),
-                reply_markup=reply_keyboard(ticket_id),
-            )
-            handed_off = True
-        except TelegramAPIError:
-            logger.exception("Не удалось отправить карточку обращения %s", ticket_id)
-
-    answer = texts.accepted(ticket_id)
-    if requested_operator:
-        handoff_status = texts.OPERATOR_REQUESTED if handed_off else texts.OPERATOR_HANDOFF_FAILED
-        answer = f"Обращение #{ticket_id}. {handoff_status}"
-    await message.answer(answer)
+    # Здесь подтверждаем прием, а дальнейшее действие бот получит из очереди после решения Worker
+    await message.answer(texts.accepted(ticket_id))
     if message.caption:
         await message.answer(texts.ATTACHMENT_IGNORED)
 

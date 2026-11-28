@@ -1,8 +1,10 @@
 """Обращения и история сообщений в PostgreSQL."""
 
+from dataclasses import dataclass
 from datetime import datetime
 
-from psycopg.rows import dict_row
+from psycopg import AsyncConnection
+from psycopg.rows import class_row, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 
@@ -47,12 +49,40 @@ async def client_tickets(pool: AsyncConnectionPool, chat_id: int, limit: int = 5
         return await cur.fetchall()
 
 
-async def client_chat_id(pool: AsyncConnectionPool, ticket_id: int) -> int | None:
-    """Чат клиента по номеру тикета. None – тикет не найден."""
+@dataclass(frozen=True)
+class OperatorTicket:
+    chat_id: int
+    reply_round: int
+    status: str
+    operator_id: int | None
+
+    def can_reply(self, operator_id: int) -> bool:
+        return self.status == "operator_processing" and self.operator_id == operator_id
+
+
+async def _operator_ticket(conn: AsyncConnection, ticket_id: int) -> OperatorTicket | None:
+    async with conn.cursor(row_factory=class_row(OperatorTicket)) as cur:
+        await cur.execute(
+            "SELECT chat_id, reply_round, status, operator_id FROM public.tickets WHERE id = %s",
+            (ticket_id,),
+        )
+        return await cur.fetchone()
+
+
+async def operator_ticket(pool: AsyncConnectionPool, ticket_id: int) -> OperatorTicket | None:
+    """Возвращает адресата, раунд и назначение тикета перед отправкой ответа."""
     async with pool.connection() as conn:
-        cur = await conn.execute("SELECT chat_id FROM tickets WHERE id = %s", (ticket_id,))
-        row = await cur.fetchone()
-        return row[0] if row is not None else None
+        return await _operator_ticket(conn, ticket_id)
+
+
+async def claim_operator_ticket(
+    pool: AsyncConnectionPool, ticket_id: int, operator_id: int,
+) -> OperatorTicket | None:
+    """Пробует назначить оператора и возвращает фактическое состояние тикета."""
+    async with pool.connection() as conn:
+        # SQL назначает свободный тикет, а чтение показывает владельца и при повторном открытии
+        await conn.execute("SELECT public.claim_operator_ticket(%s, %s)", (ticket_id, operator_id))
+        return await _operator_ticket(conn, ticket_id)
 
 
 async def ticket_details(pool: AsyncConnectionPool, ticket_id: int) -> tuple[dict, list[dict]] | None:
@@ -77,10 +107,15 @@ async def ticket_details(pool: AsyncConnectionPool, ticket_id: int) -> tuple[dic
             return ticket, list(reversed(messages))
 
 
-async def save_operator_reply(pool: AsyncConnectionPool, ticket_id: int, text: str) -> None:
-    """Сохраняет доставленный ответ в истории обращения."""
+async def confirm_operator_reply(
+    pool: AsyncConnectionPool, ticket_id: int, reply_round: int, operator_id: int, text: str,
+) -> bool:
+    """Сохраняет отправленный ответ и переводит текущий раунд в ожидание клиента."""
     async with pool.connection() as conn:
-        await conn.execute(
-            "INSERT INTO messages (ticket_id, author, text) VALUES (%s, 'operator', %s)",
-            (ticket_id, text),
+        # PostgreSQL обновляет статус и записывает ответ в историю в одной транзакции
+        cur = await conn.execute(
+            "SELECT public.confirm_operator_reply(%s, %s, %s, %s)",
+            (ticket_id, reply_round, operator_id, text),
         )
+        (saved,) = await cur.fetchone()
+        return saved

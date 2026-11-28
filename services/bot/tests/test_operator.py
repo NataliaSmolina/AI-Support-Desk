@@ -11,7 +11,7 @@ from aiogram.types import Update
 
 from support_bot import db, texts
 from support_bot.handlers.operator import GROUP_CHAT, chat_id, router, ticket_command
-from support_bot.handlers.reply import OperatorReply, ReplyCard, router as reply_router, send_reply
+from support_bot.handlers.reply import OperatorReply, ReplyCard, pending_cards, router as reply_router, send_reply, start_reply
 
 
 async def test_chat_id_shows_group_and_topic():
@@ -42,24 +42,26 @@ def reply_context(user_id=123, prompt_id=42):
     state = AsyncMock()
     message.from_user.full_name = "Иван Петров"
     state.get_data.return_value = {
-        "ticket_id": 15, "prompt_id": 42, "card": ReplyCard(15, -100222, 77, "Обращение #15"),
+        "ticket_id": 15, "reply_round": 1, "prompt_id": 42, "card": ReplyCard(15, -100222, 77, "Обращение #15"),
     }
     state.get_state.return_value = OperatorReply.waiting_for_text.state
     return message, state, SimpleNamespace(operator_ids=[123])
 
 
-@pytest.mark.parametrize("save_error", [
+@pytest.mark.parametrize(("saved", "save_error"), [
     # История сохранена – оператор получает подтверждение отправки
-    None,
+    (True, None),
+    # База выполнила запрос, но не приняла подтверждение для текущего раунда
+    (False, None),
     # История не сохранилась – после отправки бот предупреждает об этом оператора
-    psycopg.OperationalError("database unavailable"),
+    (False, psycopg.OperationalError("database unavailable")),
 ])
-async def test_send_uses_chat_from_ticket(monkeypatch, save_error):
+async def test_send_uses_chat_from_ticket(monkeypatch, saved, save_error):
     # Бот берет адресата из тикета, отправляет ответ, завершает ввод и обновляет карточку именем оператора
-    lookup = AsyncMock(return_value=111)
-    monkeypatch.setattr(db, "client_chat_id", lookup)
-    save_reply = AsyncMock(side_effect=save_error)
-    monkeypatch.setattr(db, "save_operator_reply", save_reply)
+    lookup = AsyncMock(return_value=db.OperatorTicket(111, 1, "operator_processing", 123))
+    monkeypatch.setattr(db, "operator_ticket", lookup)
+    confirm_reply = AsyncMock(return_value=saved, side_effect=save_error)
+    monkeypatch.setattr(db, "confirm_operator_reply", confirm_reply)
     message, state, settings = reply_context()
     bot = AsyncMock()
     pool = object()
@@ -68,21 +70,21 @@ async def test_send_uses_chat_from_ticket(monkeypatch, save_error):
 
     lookup.assert_awaited_once_with(pool, 15)
     bot.send_message.assert_awaited_once_with(chat_id=111, text=message.text)
-    save_reply.assert_awaited_once_with(pool, 15, message.text)
+    confirm_reply.assert_awaited_once_with(pool, 15, 1, 123, message.text)
     state.clear.assert_awaited_once()
     card_text = "Обращение #15\n\nОбработал: Иван Петров"
-    if save_error:
+    if not saved:
         card_text += "\nОтвет отправлен, история не сохранена."
     bot.edit_message_text.assert_awaited_once_with(chat_id=-100222, message_id=77, text=card_text)
-    expected = texts.REPLY_SAVE_FAILED if save_error else "Ответ на обращение #15 отправлен."
+    expected = "Ответ на обращение #15 отправлен." if saved else texts.REPLY_SAVE_FAILED
     message.answer.assert_awaited_once_with(expected)
 
 
 async def test_send_does_not_save_unconfirmed_reply(monkeypatch):
     # При таймауте бот завершает ввод и сообщает, что отправка не подтверждена. История и карточка не обновляются
-    monkeypatch.setattr(db, "client_chat_id", AsyncMock(return_value=111))
-    save_reply = AsyncMock()
-    monkeypatch.setattr(db, "save_operator_reply", save_reply)
+    monkeypatch.setattr(db, "operator_ticket", AsyncMock(return_value=db.OperatorTicket(111, 1, "operator_processing", 123)))
+    confirm_reply = AsyncMock()
+    monkeypatch.setattr(db, "confirm_operator_reply", confirm_reply)
     message, state, settings = reply_context()
     bot = AsyncMock()
     bot.send_message.side_effect = TelegramNetworkError(
@@ -91,7 +93,7 @@ async def test_send_does_not_save_unconfirmed_reply(monkeypatch):
 
     await send_reply(message, bot, state, settings, object())
 
-    save_reply.assert_not_awaited()
+    confirm_reply.assert_not_awaited()
     bot.edit_message_text.assert_not_awaited()
     state.clear.assert_awaited_once()
     message.answer.assert_awaited_once_with(texts.REPLY_SEND_UNCONFIRMED)
@@ -101,7 +103,7 @@ async def test_send_does_not_save_unconfirmed_reply(monkeypatch):
     "with_pool, result, error, expected",
     [
         # Без пула бот сразу сообщает, что обращение недоступно
-        (False, 111, None, texts.TICKET_UNAVAILABLE),
+        (False, None, None, texts.TICKET_UNAVAILABLE),
         # Поиск не вернул чат клиента – обращение не найдено
         (True, None, None, texts.TICKET_NOT_FOUND),
         # Ошибка запроса к базе – обращение временно недоступно
@@ -111,7 +113,7 @@ async def test_send_does_not_save_unconfirmed_reply(monkeypatch):
 async def test_send_does_not_deliver_when_ticket_unavailable(monkeypatch, with_pool, result, error, expected):
     # Во всех трех случаях оператору приходит объяснение, отправка клиенту не вызывается
     lookup = AsyncMock(return_value=result, side_effect=error)
-    monkeypatch.setattr(db, "client_chat_id", lookup)
+    monkeypatch.setattr(db, "operator_ticket", lookup)
     message, state, settings = reply_context()
     bot = AsyncMock()
 
@@ -121,6 +123,24 @@ async def test_send_does_not_deliver_when_ticket_unavailable(monkeypatch, with_p
     message.answer.assert_awaited_once_with(expected)
     if not with_pool:
         lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize("ticket", [
+    db.OperatorTicket(111, 1, "operator_processing", 999),  # Тикет назначен другому оператору
+    db.OperatorTicket(111, 2, "operator_processing", 123),  # Подсказка относится к прошлому раунду
+    db.OperatorTicket(111, 1, "waiting_client", 123),  # Клиенту уже ответили
+])
+async def test_send_rechecks_assignment_and_round(monkeypatch, ticket):
+    # Если назначение, раунд или этап изменились, отменяем старый ввод до отправки
+    monkeypatch.setattr(db, "operator_ticket", AsyncMock(return_value=ticket))
+    message, state, settings = reply_context()
+    bot = AsyncMock()
+
+    await send_reply(message, bot, state, settings, object())
+
+    bot.send_message.assert_not_awaited()
+    state.clear.assert_awaited_once()
+    message.answer.assert_awaited_once_with(texts.REPLY_TICKET_INACTIVE)
 
 
 @pytest.mark.parametrize(
@@ -135,7 +155,7 @@ async def test_send_does_not_deliver_when_ticket_unavailable(monkeypatch, with_p
 async def test_reply_requires_operator_and_current_prompt(monkeypatch, user_id, prompt_id, expected):
     # Проверки доступа и подсказки отклоняют ответ до поиска клиента в БД и отправки
     lookup = AsyncMock()
-    monkeypatch.setattr(db, "client_chat_id", lookup)
+    monkeypatch.setattr(db, "operator_ticket", lookup)
     message, state, settings = reply_context(user_id, prompt_id)
     bot = AsyncMock()
 
@@ -161,13 +181,16 @@ async def test_old_button_is_rejected_by_router(data):
     callback.answer.assert_awaited_once_with(texts.CARD_OUTDATED, show_alert=True)
 
 
-async def test_reply_link_and_cancel_through_dispatcher():
+async def test_reply_link_and_cancel_through_dispatcher(monkeypatch):
     # Проверяем весь переход от кнопки в группе до отмены ответа в личке через Dispatcher
     bot = AsyncMock()
     bot.id = 44
     bot.return_value = SimpleNamespace(message_id=42)
     bot.me.return_value.username = "support_bot"
-    dispatcher = Dispatcher(settings=SimpleNamespace(operator_ids=[123], operator_chat_id=-100222))
+    pool = object()
+    claim = AsyncMock(return_value=db.OperatorTicket(111, 1, "operator_processing", 123))
+    monkeypatch.setattr(db, "claim_operator_ticket", claim)
+    dispatcher = Dispatcher(settings=SimpleNamespace(operator_ids=[123], operator_chat_id=-100222), pool=pool)
     dispatcher.include_router(reply_router)
 
     async def send_command(update_id, user_id, text):
@@ -204,9 +227,10 @@ async def test_reply_link_and_cancel_through_dispatcher():
 
         # Переход по ссылке запоминает номер тикета, подсказку и исходную карточку
         await send_command(1, 123, "/start reply_15")
+        claim.assert_awaited_once_with(pool, 15, 123)
         state = dispatcher.fsm.get_context(bot=bot, chat_id=123, user_id=123)
         assert await state.get_data() == {
-            "ticket_id": 15, "prompt_id": 42,
+            "ticket_id": 15, "reply_round": 1, "prompt_id": 42,
             "card": ReplyCard(15, -100222, 77, "Обращение #15\nВопрос клиента"),
         }
 
@@ -226,6 +250,25 @@ async def test_reply_link_and_cancel_through_dispatcher():
         assert await state.get_data() == {}
     finally:
         reply_router._parent_router = None
+
+
+async def test_start_reply_refuses_ticket_already_taken(monkeypatch):
+    # Оператор из списка не получает подсказку, если тикет уже назначен коллеге
+    bot = SimpleNamespace(id=44)
+    message = AsyncMock()
+    message.from_user.id = 999
+    state = AsyncMock()
+    state.get_state.return_value = None
+    settings = SimpleNamespace(operator_ids=[123, 999])
+    monkeypatch.setitem(pending_cards, (bot.id, 999), ReplyCard(15, -100222, 77, "Обращение #15"))
+    monkeypatch.setattr(db, "claim_operator_ticket", AsyncMock(
+        return_value=db.OperatorTicket(111, 1, "operator_processing", 123),
+    ))
+
+    await start_reply(message, CommandObject(args="reply_15"), state, settings, bot, object())
+
+    message.answer.assert_awaited_once_with(texts.REPLY_TICKET_TAKEN)
+    state.set_state.assert_not_awaited()
 
 
 @pytest.mark.parametrize("chat_id, user_id", [

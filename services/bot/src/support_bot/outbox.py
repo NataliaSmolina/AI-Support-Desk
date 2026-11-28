@@ -1,5 +1,6 @@
 """Отправка ответов и карточек из очереди Worker в Telegram."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Literal
@@ -16,6 +17,14 @@ from support_bot.config import BotSettings
 from support_bot.keyboards import reply_keyboard
 
 logger = logging.getLogger(__name__)
+
+# Пауза перед следующей проверкой пустой очереди или после ошибки БД
+POLL_INTERVAL_S = 2
+# Как часто проверяем прерванные отправки
+RECOVERY_INTERVAL_S = 30
+# Сколько задача может оставаться в sending до перевода в unknown
+# Даем запросу к Telegram время завершиться с запасом
+STALE_SEND_AFTER_S = 120
 
 
 @dataclass(frozen=True)
@@ -164,3 +173,28 @@ async def process_next(bot: Bot, pool: AsyncConnectionPool, settings: BotSetting
             logger.exception("Не удалось записать доставку задачи %s, сообщение %s", task.id, receipt.message_id)
             raise
     return True
+
+
+async def run(bot: Bot, pool: AsyncConnectionPool, settings: BotSettings, stop: asyncio.Event) -> None:
+    """Обрабатывает очередь до остановки бота и завершает начатую отправку."""
+    loop = asyncio.get_running_loop()
+    # Первую проверку зависших задач делаем при запуске бота
+    next_recovery = loop.time()
+    while not stop.is_set():
+        try:
+            if loop.time() >= next_recovery:
+                stale = await mark_stale_unknown(pool, STALE_SEND_AFTER_S)
+                next_recovery = loop.time() + RECOVERY_INTERVAL_S
+                if stale:
+                    logger.warning("Зависших отправок для проверки: %s", stale)
+            if not stop.is_set() and await process_next(bot, pool, settings):
+                # Пока есть готовые задачи, берем следующую без паузы
+                continue
+        except psycopg.Error:
+            logger.exception("Не удалось обработать очередь бота")
+
+        try:
+            # При остановке прерываем ожидание сразу, без задержки на весь интервал
+            await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S)
+        except TimeoutError:
+            pass

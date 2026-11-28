@@ -1,8 +1,9 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import psycopg
+import pytest
 from aiogram import F
 
 from support_bot import db, texts
@@ -38,58 +39,61 @@ async def test_help_answers_with_help():
     message.answer.assert_awaited_once_with(texts.HELP)
 
 
-async def test_question_sends_card_to_operators(monkeypatch):
-    # Сохраненный вопрос приходит в настроенную тему с кнопкой ответа на тикет №15
-    monkeypatch.setattr(db, "save_question", AsyncMock(return_value=15))
+@pytest.mark.parametrize("text", [
+    "Где мой заказ?",  # Обычный вопрос должен уйти в обработку Worker
+    "Позови оператора",  # Просьба об операторе тоже сохраняется для решения Worker
+])
+async def test_question_saves_text_and_only_confirms_receipt(monkeypatch, text):
+    # После записи бот присылает только номер тикета, даже если клиент попросил оператора
+    save = AsyncMock(return_value=15)
+    monkeypatch.setattr(db, "save_question", save)
     message = AsyncMock()
-    message.text = "Где мой заказ?"
+    message.text = text
     message.caption = None
     message.chat.id = 111
-    bot = AsyncMock()
-    settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
+    pool = object()
 
-    await question(message, bot, settings, pool=object(), event_update=SimpleNamespace(update_id=1))
+    await question(message, pool=pool, event_update=SimpleNamespace(update_id=1))
 
-    # Достаем аргументы, с которыми бот отправил карточку
-    sent = bot.send_message.await_args.kwargs
-    assert sent["chat_id"] == -100222
-    assert sent["message_thread_id"] == 5
-    assert "Где мой заказ?" in sent["text"]
-    assert sent["reply_markup"] is not None
-    button = sent["reply_markup"].inline_keyboard[0][0]
-    assert button.text == "Ответить"
-    assert button.callback_data == "reply:15"
+    save.assert_awaited_once_with(pool, 1, 111, text)
+    message.answer.assert_awaited_once_with(texts.accepted(15))
+
+
+async def test_question_keeps_caption_and_warns_about_attachment(monkeypatch):
+    # Подпись сохраняется как вопрос, клиент видит номер и предупреждение о вложении
+    save = AsyncMock(return_value=15)
+    monkeypatch.setattr(db, "save_question", save)
+    message = AsyncMock(text=None, caption="Где возврат?")
+    message.chat.id = 111
+    pool = object()
+
+    await question(message, pool=pool, event_update=SimpleNamespace(update_id=1))
+
+    save.assert_awaited_once_with(pool, 1, 111, "Где возврат?")
+    assert message.answer.await_args_list == [call(texts.accepted(15)), call(texts.ATTACHMENT_IGNORED)]
 
 
 async def test_question_without_db_is_not_accepted():
-    # Без подключения к базе клиент получает сообщение об ошибке, карточка не отправляется
+    # Без подключения к базе клиент получает сообщение об ошибке приема
     message = AsyncMock()
     message.text = "Где мой заказ?"
     message.caption = None
-    bot = AsyncMock()
-    settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
-
-    await question(message, bot, settings)
+    await question(message)
 
     message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
-    bot.send_message.assert_not_awaited()
 
 
 async def test_question_without_update_is_not_accepted(monkeypatch):
-    # Без события Telegram бот сообщает об ошибке и не вызывает сохранение или отправку карточки
+    # Без события Telegram бот сообщает об ошибке и не вызывает сохранение
     save = AsyncMock()
     monkeypatch.setattr(db, "save_question", save)
     message = AsyncMock()
     message.text = "Где мой заказ?"
     message.caption = None
-    bot = AsyncMock()
-    settings = SimpleNamespace(operator_chat_id=-100222, operator_thread_id=5)
-
-    await question(message, bot, settings, pool=object())
+    await question(message, pool=object())
 
     message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
     save.assert_not_awaited()
-    bot.send_message.assert_not_awaited()
 
 
 async def test_question_db_error_tells_client(monkeypatch):
@@ -97,9 +101,7 @@ async def test_question_db_error_tells_client(monkeypatch):
     monkeypatch.setattr(db, "save_question", AsyncMock(side_effect=psycopg.OperationalError))
     message = AsyncMock()
     message.text = "Где мой заказ?"
-    settings = SimpleNamespace(operator_chat_id=None)
-
-    await question(message, AsyncMock(), settings, pool=object(), event_update=SimpleNamespace(update_id=1))
+    await question(message, pool=object(), event_update=SimpleNamespace(update_id=1))
 
     message.answer.assert_awaited_once_with(texts.SAVE_FAILED)
 
@@ -121,6 +123,22 @@ def test_status_list_shows_number_time_and_status():
 
     assert "Обращение #15\n31.10.26, 13:31\nСтатус: В обработке" in result["text"]
     assert result["entities"][0].type == "bold"
+
+
+@pytest.mark.parametrize(("status", "label"), [
+    ("ready", "Ответ готовится к отправке"),  # Worker подготовил ответ
+    ("waiting_operator", "Ожидает оператора"),  # Нужен ручной ответ
+    ("operator_processing", "В работе у оператора"),  # Обращение уже взяли
+    ("waiting_client", "Ожидаем ответа клиента"),  # Ответ уже отправлен
+    ("closed", "Закрыто"),  # Обращение завершено
+])
+def test_status_list_translates_lifecycle_statuses(status, label):
+    # /status показывает клиенту понятную подпись для каждого нового этапа
+    created_at = datetime(2026, 10, 31, 10, 31, tzinfo=UTC)
+
+    text, _ = texts.status_list([(15, status, created_at)]).render()
+
+    assert f"Статус: {label}" in text
 
 
 async def test_not_text_asks_for_text():

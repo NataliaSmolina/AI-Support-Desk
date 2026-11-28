@@ -71,6 +71,7 @@ def is_operator(message: Message, settings: BotSettings) -> bool:
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith(REPLY_START_PREFIX)))
 async def start_reply(
     message: Message, command: CommandObject, state: FSMContext, settings: BotSettings, bot: Bot,
+    pool: AsyncConnectionPool | None = None,
 ) -> None:
     if not is_operator(message, settings):
         await message.answer(texts.NOT_OPERATOR)
@@ -89,12 +90,37 @@ async def start_reply(
     if card is None or card.ticket_id != ticket_id:
         await message.answer(texts.REPLY_OPEN_FROM_CARD)
         return
-    pending_cards.pop(key)
+    if pool is None:
+        await message.answer(texts.TICKET_UNAVAILABLE)
+        return
+    operator_id = message.from_user.id
+    try:
+        # Закрепляем тикет, когда оператор открывает ввод в личке
+        ticket = await db.claim_operator_ticket(pool, ticket_id, operator_id)
+    except psycopg.Error:
+        logger.exception("Не удалось взять обращение %s", ticket_id)
+        await message.answer(texts.TICKET_UNAVAILABLE)
+        return
+    if ticket is None:
+        await message.answer(texts.TICKET_NOT_FOUND)
+        return
+    if not ticket.can_reply(operator_id):
+        await message.answer(
+            texts.REPLY_TICKET_TAKEN if ticket.status == "operator_processing" else texts.REPLY_TICKET_INACTIVE,
+        )
+        return
+
     prompt = await message.answer(
         f"{texts.REPLY_PROMPT_PREFIX}{ticket_id}. Для отмены отправьте /cancel.",
         reply_markup=ForceReply(input_field_placeholder="Ответ клиенту"),
     )
-    await state.set_data({"ticket_id": ticket_id, "prompt_id": prompt.message_id, "card": card})
+    # Пока Telegram отправлял подсказку, оператор мог нажать на другую карточку
+    if pending_cards.get(key) is card:
+        pending_cards.pop(key)
+    # Запоминаем раунд, чтобы подсказка подходила только к этому этапу переписки
+    await state.set_data({
+        "ticket_id": ticket_id, "reply_round": ticket.reply_round, "prompt_id": prompt.message_id, "card": card,
+    })
     await state.set_state(OperatorReply.waiting_for_text)
 
 
@@ -144,20 +170,27 @@ async def send_reply(
         await message.answer(texts.TICKET_UNAVAILABLE)
         return
     ticket_id = selection["ticket_id"]
+    reply_round = selection["reply_round"]
+    operator_id = message.from_user.id
     reply_text = message.text
     try:
-        client_id = await db.client_chat_id(pool, ticket_id)
+        ticket = await db.operator_ticket(pool, ticket_id)
     except psycopg.Error:
         logger.exception("Не удалось получить чат обращения %s", ticket_id)
         await message.answer(texts.TICKET_UNAVAILABLE)
         return
-    if client_id is None:
+    if ticket is None:
         await state.clear()
         await message.answer(texts.TICKET_NOT_FOUND)
         return
+    # Пока оператор писал текст, назначение, статус или раунд могли измениться
+    if not ticket.can_reply(operator_id) or ticket.reply_round != reply_round:
+        await state.clear()
+        await message.answer(texts.REPLY_TICKET_INACTIVE)
+        return
 
     try:
-        await bot.send_message(chat_id=client_id, text=reply_text)
+        await bot.send_message(chat_id=ticket.chat_id, text=reply_text)
     except TelegramForbiddenError:
         logger.warning("Telegram запретил отправку по обращению %s", ticket_id)
         await message.answer(texts.CLIENT_BLOCKED)
@@ -169,16 +202,20 @@ async def send_reply(
         return
 
     await state.clear()
-    warning = None
     try:
-        await db.save_operator_reply(pool, ticket_id, reply_text)
+        # Записываем ручной ответ в историю после подтверждения Telegram
+        saved = await db.confirm_operator_reply(pool, ticket_id, reply_round, operator_id, reply_text)
     except psycopg.Error:
         logger.exception("Ответ отправлен, но не сохранен для обращения %s", ticket_id)
-        warning = texts.REPLY_SAVE_FAILED
+        saved = False
+    else:
+        if not saved:
+            logger.warning("База не подтвердила ответ оператора по обращению %s, раунд %s", ticket_id, reply_round)
 
     card = selection["card"]
     operator_name = message.from_user.full_name
     status = f"Обработал: {operator_name}"
+    warning = None if saved else texts.REPLY_SAVE_FAILED
     if warning:
         status += "\nОтвет отправлен, история не сохранена."
     try:
